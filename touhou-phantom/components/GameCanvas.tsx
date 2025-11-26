@@ -398,7 +398,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         particleGraphics.fill(0xffffff);
         texturesRef.current.particle = app.renderer.generateTexture(particleGraphics);
 
-        console.log('Game initialized successfully');
         initializedRef.current = true;
       } catch (error) {
         console.error('Error loading textures:', error);
