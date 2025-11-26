@@ -582,16 +582,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
             // Add footprint
             if (Math.floor(timeRef.current) % 5 === 0) {
-                let footOffset = 30;
+                let footOffset = 20; // Reduced from 30 to 20
                 if (character.id === 'mokou') {
-                    const targetHeight = 180;
+                    const targetHeight = 100; // Reduced from 180 to 100
                     const isMoving = isMovingRef.current;
                     if (isMoving && texturesRef.current.sprite) {
                         const scaleMove = targetHeight / (texturesRef.current.sprite[0].height);
                         const bounds = spriteBoundsRef.current;
                         footOffset = (bounds.offsetY + bounds.height) * scaleMove;
                     } else {
-                        footOffset = 90;
+                        footOffset = 50; // Reduced from 90 to 50
                     }
                 }
                 footprintsRef.current.push({
@@ -2081,9 +2081,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Hit Player
-        let playerRadius = 22.5;
+        let playerRadius = 15; // Reduced from 22.5 to 15
         if (character.id === 'mokou') {
-            const targetHeight = 180;
+            const targetHeight = 100; // Reduced from 180 to 100
             const isMoving = isMovingRef.current;
             if (isMoving && texturesRef.current.sprite) {
                 const scaleMove = targetHeight / (texturesRef.current.sprite[0].height);
@@ -2284,9 +2284,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Player shadow
     const playerShadow = new PIXI.Graphics();
-    const playerShadowWidth = 60;
-    const playerShadowHeight = 20;
-    playerShadow.ellipse(player.pos.x, player.pos.y + 80, playerShadowWidth, playerShadowHeight);
+    const playerShadowWidth = 40; // Reduced from 60 to 40
+    const playerShadowHeight = 15; // Reduced from 20 to 15
+    playerShadow.ellipse(player.pos.x, player.pos.y + 45, playerShadowWidth, playerShadowHeight); // Reduced offset from 80 to 45
     playerShadow.fill({ color: 0x000000, alpha: 0.3 });
     shadowContainerRef.current.addChild(playerShadow);
 
@@ -2444,7 +2444,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (texture) {
           const sprite = new PIXI.Sprite(texture);
           sprite.anchor.set(0.5);
-          const targetHeight = 140; // Reduced from 180 to 140
+          const targetHeight = 100; // Reduced from 140 to 100
           const scale = targetHeight / texture.height;
           sprite.x = player.pos.x;
           sprite.y = player.pos.y;
@@ -2453,13 +2453,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           entityContainerRef.current.addChild(sprite);
         } else {
           const graphics = new PIXI.Graphics();
-          graphics.circle(player.pos.x, player.pos.y, 22); // Reduced from 30 to 22
+          graphics.circle(player.pos.x, player.pos.y, 15); // Reduced from 22 to 15
           graphics.fill(character.color);
           entityContainerRef.current.addChild(graphics);
         }
       } else {
         const graphics = new PIXI.Graphics();
-        graphics.circle(player.pos.x, player.pos.y, 22); // Reduced from 30 to 22
+        graphics.circle(player.pos.x, player.pos.y, 15); // Reduced from 22 to 15
         graphics.fill(character.color);
         entityContainerRef.current.addChild(graphics);
       }
