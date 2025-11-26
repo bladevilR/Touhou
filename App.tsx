@@ -4,7 +4,7 @@ import { GameCanvas } from './components/GameCanvas';
 import { MainMenu } from './components/MainMenu';
 import { LevelUpScreen } from './components/LevelUpScreen';
 import { GameState, CharacterId, UpgradeOption, Weapon, CharacterConfig } from './types';
-import { CHARACTERS, WEAPON_DEFS, PASSIVE_DEFS } from './constants';
+import { CHARACTERS, WEAPON_DEFS, PASSIVE_DEFS, STAT_UPGRADES, WEAPON_UPGRADE_TREES } from './constants';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
@@ -22,10 +22,47 @@ const App: React.FC = () => {
   const generateUpgradeOptions = useCallback((currentWeapons: Weapon[], currentPassives: string[], currentHp: number, maxHp: number): UpgradeOption[] => {
     const options: UpgradeOption[] = [];
     const maxOptions = 3;
-    
+
+    // Check for Weapon Upgrade Tree choices (Tier深化升级)
+    // Trigger at levels 3, 5, 7 for each weapon
+    const weaponsNeedingUpgrade = currentWeapons.filter(w => {
+      const level = w.level;
+      const upgrades = w.upgrades || [];
+
+      // Tier 1: level 3, Tier 2: level 5, Tier 3: level 7
+      if (level === 3 && upgrades.length === 0) return true;
+      if (level === 5 && upgrades.length === 1) return true;
+      if (level === 7 && upgrades.length === 2) return true;
+      return false;
+    });
+
+    // If a weapon needs upgrade tree choice, force show those options
+    if (weaponsNeedingUpgrade.length > 0) {
+      const weaponToUpgrade = weaponsNeedingUpgrade[0]; // Take first weapon needing upgrade
+      const upgradeTree = WEAPON_UPGRADE_TREES[weaponToUpgrade.id];
+
+      if (upgradeTree) {
+        const currentTier = (weaponToUpgrade.upgrades || []).length + 1; // 1, 2, or 3
+        const availableUpgrades = upgradeTree.filter(u => u.tier === currentTier);
+
+        // Return 3 choices for this weapon upgrade
+        return availableUpgrades.slice(0, 3).map(upgrade => ({
+          id: upgrade.id,
+          type: 'weapon_upgrade' as any, // New type for weapon upgrades
+          name: upgrade.name,
+          description: upgrade.description,
+          icon: upgrade.icon,
+          level: currentTier,
+          isNew: true,
+          rarity: currentTier === 3 ? 'legendary' : (currentTier === 2 ? 'rare' : 'common'),
+          weaponId: weaponToUpgrade.id // Store which weapon this upgrade is for
+        } as any));
+      }
+    }
+
     // Pools
     const existingWeaponPool = currentWeapons.filter(w => w.level < w.maxLevel);
-    
+
     // Filter New Weapons: Must NOT be exclusive to another character
     const newWeaponPool = Object.values(WEAPON_DEFS).filter(def => {
         const hasIt = currentWeapons.some(cw => cw.id === def.id);
@@ -33,6 +70,9 @@ const App: React.FC = () => {
         if (def.exclusiveTo && def.exclusiveTo !== selectedCharacter.id) return false;
         return true;
     });
+
+    // 属性升级池（替代通用武器）
+    const statUpgradePool = Object.values(STAT_UPGRADES);
 
     const passivePool = Object.values(PASSIVE_DEFS).filter(p => !currentPassives.includes(p.id)); 
     
@@ -62,25 +102,48 @@ const App: React.FC = () => {
                 };
             }
         }
-        // 3. New Item (30%)
-        else if (rand < 0.91 && (newWeaponPool.length > 0 || passivePool.length > 0)) {
-            const pickWeapon = Math.random() > 0.5 && newWeaponPool.length > 0;
-            if (pickWeapon) {
-                 const w = newWeaponPool[Math.floor(Math.random() * newWeaponPool.length)];
-                 if (!options.find(o => o.id === w.id)) {
-                     candidate = {
-                         id: w.id, type: 'weapon', name: w.name, description: w.description,
-                         icon: '⚔️', level: 0, isNew: true, rarity: 'rare'
-                     };
-                 }
-            } else if (passivePool.length > 0) {
-                 const p = passivePool[Math.floor(Math.random() * passivePool.length)];
-                 if (!options.find(o => o.id === p.id)) {
-                     candidate = {
-                         id: p.id, type: 'passive', name: p.name, description: p.description,
-                         icon: '📘', level: 0, isNew: true, rarity: 'common'
-                     };
-                 }
+        // 3. New Item or Stat Upgrade (30%)
+        else if (rand < 0.91) {
+            const pools = [
+                { pool: newWeaponPool, weight: newWeaponPool.length > 0 ? 0.3 : 0 },
+                { pool: statUpgradePool, weight: 0.5 }, // 属性升级占大头
+                { pool: passivePool, weight: passivePool.length > 0 ? 0.2 : 0 }
+            ];
+            const totalWeight = pools.reduce((sum, p) => sum + p.weight, 0);
+
+            if (totalWeight > 0) {
+                const roll = Math.random() * totalWeight;
+                let cumulative = 0;
+
+                for (const poolData of pools) {
+                    cumulative += poolData.weight;
+                    if (roll <= cumulative) {
+                        if (poolData.pool === newWeaponPool && newWeaponPool.length > 0) {
+                            const w = newWeaponPool[Math.floor(Math.random() * newWeaponPool.length)];
+                            if (!options.find(o => o.id === w.id)) {
+                                candidate = {
+                                    id: w.id, type: 'weapon', name: w.name, description: w.description,
+                                    icon: '⚔️', level: 0, isNew: true, rarity: 'rare'
+                                };
+                            }
+                        } else if (poolData.pool === statUpgradePool) {
+                            const s = statUpgradePool[Math.floor(Math.random() * statUpgradePool.length)];
+                            candidate = {
+                                id: s.id + '_' + Math.random(), type: 'passive', name: s.name, description: s.description,
+                                icon: s.icon, level: 0, isNew: true, rarity: 'common'
+                            };
+                        } else if (poolData.pool === passivePool && passivePool.length > 0) {
+                            const p = passivePool[Math.floor(Math.random() * passivePool.length)];
+                            if (!options.find(o => o.id === p.id)) {
+                                candidate = {
+                                    id: p.id, type: 'passive', name: p.name, description: p.description,
+                                    icon: '📘', level: 0, isNew: true, rarity: 'common'
+                                };
+                            }
+                        }
+                        break;
+                    }
+                }
             }
         }
         // 4. Heal / Gold (10%)

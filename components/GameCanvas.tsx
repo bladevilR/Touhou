@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as PIXI from 'pixi.js';
 import { Emitter, EmitterConfigV3 } from '@pixi/particle-emitter';
-import { CANVAS_WIDTH, CANVAS_HEIGHT, MAP_WIDTH, MAP_HEIGHT, FPS, WEAPON_DEFS, WAVES, GAME_SPEED } from '../constants';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, MAP_WIDTH, MAP_HEIGHT, FPS, WEAPON_DEFS, WAVES, GAME_SPEED, BOSS_CONFIGS } from '../constants';
 import { GameState, CharacterConfig, Entity, Enemy, Projectile, Gem, DamageNumber, Weapon, UpgradeOption, Vector2 } from '../types';
 
 interface GameCanvasProps {
@@ -83,7 +83,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     passives: [] as string[],
     facing: { x: 1, y: 0 },
     invulnTimer: 0,
-    isDead: false
+    isDead: false,
+    // 主动技能状态
+    activeSkill: null as Weapon | null,
+    activeSkillCooldown: 0,
+    isDashing: false,
+    dashTarget: { x: 0, y: 0 },
+    dashProgress: 0
   });
 
   const cameraRef = useRef({ x: MAP_WIDTH / 2 - CANVAS_WIDTH / 2, y: MAP_HEIGHT / 2 - CANVAS_HEIGHT / 2 });
@@ -101,6 +107,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const animationFrameRef = useRef(0);
   const spriteFrameCount = 8;
   const [hudStats, setHudStats] = useState({ hp: 100, maxHp: 100, exp: 0, nextExp: 10, level: 1, time: 0 });
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // Boss spawn tracking
+  const bossSpawnedRef = useRef({ cirno: false, youmu: false, kaguya: false });
 
   // Screen shake state
   const screenShakeRef = useRef({ x: 0, y: 0, intensity: 0, duration: 0 });
@@ -117,15 +127,42 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 existing.cooldownMax *= 0.95;
             } else {
                 const def = WEAPON_DEFS[newWeaponToAdd.id];
-                if (def) player.weapons.push({ ...def, level: 1, cooldownTimer: 0 });
+                if (def) player.weapons.push({ ...def, level: 1, cooldownTimer: 0, upgrades: [] });
+            }
+        } else if (newWeaponToAdd.type === 'weapon_upgrade') {
+            // Handle weapon upgrade tree choices
+            const weaponToUpgrade = player.weapons.find(w => w.id === newWeaponToAdd.weaponId);
+            if (weaponToUpgrade) {
+                if (!weaponToUpgrade.upgrades) weaponToUpgrade.upgrades = [];
+                weaponToUpgrade.upgrades.push(newWeaponToAdd.id);
+
+                // Add the upgrade ID to player's passives so we can check it in weapon logic
+                player.passives.push(newWeaponToAdd.id);
             }
         } else if (newWeaponToAdd.type === 'passive') {
+            // 属性升级系统
+            if(newWeaponToAdd.id.startsWith('penetration')) {
+                player.weapons.forEach(w => {
+                    // 增加贯穿数（通过修改基础投射物参数实现）
+                });
+                player.passives.push('penetration_boost');
+            } else if(newWeaponToAdd.id.startsWith('projectile_count')) {
+                player.passives.push('projectile_count_boost');
+            } else if(newWeaponToAdd.id.startsWith('size')) {
+                player.stats.area += 0.15;
+            } else if(newWeaponToAdd.id.startsWith('damage')) {
+                player.stats.might += 0.2;
+            } else if(newWeaponToAdd.id.startsWith('attack_speed')) {
+                player.stats.cooldown -= 0.1;
+            }
+            // 原有被动
+            else if(newWeaponToAdd.id === 'p_glove') player.stats.pickupRange += 20;
+            else if(newWeaponToAdd.id === 'grimoire') player.stats.cooldown -= 0.1;
+            else if(newWeaponToAdd.id === 'mushroom') player.stats.area += 0.1;
+            else if(newWeaponToAdd.id === 'omamori') player.stats.armor += 1;
+            else if(newWeaponToAdd.id === 'geta') player.stats.speed += 0.4;
+
             player.passives.push(newWeaponToAdd.id);
-            if(newWeaponToAdd.id === 'p_glove') player.stats.pickupRange += 20;
-            if(newWeaponToAdd.id === 'grimoire') player.stats.cooldown -= 0.1;
-            if(newWeaponToAdd.id === 'mushroom') player.stats.area += 0.1;
-            if(newWeaponToAdd.id === 'omamori') player.stats.armor += 1;
-            if(newWeaponToAdd.id === 'geta') player.stats.speed += 0.4;
         } else if (newWeaponToAdd.type === 'heal') {
             if(newWeaponToAdd.id === 'fantasy_gift') {
                 player.stats.maxHp += 50;
@@ -382,7 +419,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         texturesRef.current.particle = app.renderer.generateTexture(particleGraphics);
 
         console.log('All textures loaded');
+        console.log('Setting initializedRef to true, gameState:', gameState);
         initializedRef.current = true;
+        setIsInitialized(true); // Trigger useEffect
       } catch (error) {
         console.error('Error loading textures:', error);
       }
@@ -447,10 +486,34 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     if (playerRef.current.weapons.length === 0) {
         playerRef.current.stats = { ...character.stats };
         const startWep = WEAPON_DEFS[character.startingWeaponId];
-        if (startWep) playerRef.current.weapons.push({ ...startWep, level: 1, cooldownTimer: 0 });
+        if (startWep) playerRef.current.weapons.push({ ...startWep, level: 1, cooldownTimer: 0, upgrades: [] });
     }
 
-    const handleKeyDown = (e: KeyboardEvent) => inputRef.current.keys.add(e.code);
+    const handleKeyDown = (e: KeyboardEvent) => {
+        inputRef.current.keys.add(e.code);
+
+        // 空格键触发主动技能
+        if (e.code === 'Space' && gameState === GameState.PLAYING) {
+            e.preventDefault();
+            const player = playerRef.current;
+
+            // 查找主动技能（type === 'dash'）
+            const activeSkill = player.weapons.find(w => w.type === 'dash');
+            if (activeSkill && player.activeSkillCooldown <= 0 && !player.isDashing) {
+                // 计算目标位置（鼠标位置）
+                const mouseWorld = {
+                    x: inputRef.current.mouse.x + cameraRef.current.x,
+                    y: inputRef.current.mouse.y + cameraRef.current.y
+                };
+
+                player.isDashing = true;
+                player.dashTarget = mouseWorld;
+                player.dashProgress = 0;
+                player.activeSkill = activeSkill;
+                player.activeSkillCooldown = activeSkill.cooldownMax;
+            }
+        }
+    };
     const handleKeyUp = (e: KeyboardEvent) => inputRef.current.keys.delete(e.code);
     const handleMouseMove = (e: MouseEvent) => {
         if(containerRef.current) {
@@ -471,7 +534,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         window.removeEventListener('keyup', handleKeyUp);
         window.removeEventListener('mousemove', handleMouseMove);
     };
-  }, []);
+  }, [gameState]);
 
   const update = useCallback(() => {
     if (gameState !== GameState.PLAYING) return;
@@ -562,11 +625,207 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
     if (player.invulnTimer > 0) player.invulnTimer -= dt;
 
+    // 主动技能冷却
+    if (player.activeSkillCooldown > 0) {
+        player.activeSkillCooldown -= dt;
+    }
+
+    // Dash 技能处理
+    if (player.isDashing && player.activeSkill) {
+        // kick_speed: 飞行速度 +200%，伤害 +100%
+        let dashSpeed = 20;
+        let damageMultiplier = 1.0;
+        if (player.passives.includes('kick_speed')) {
+            dashSpeed *= 3; // +200%
+            damageMultiplier = 2.0; // +100%
+        }
+
+        const dx = player.dashTarget.x - player.pos.x;
+        const dy = player.dashTarget.y - player.pos.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist > 5) {
+            // 继续冲刺
+            const moveX = (dx / dist) * dashSpeed * dt;
+            const moveY = (dy / dist) * dashSpeed * dt;
+            player.pos.x += moveX;
+            player.pos.y += moveY;
+            player.pos.x = Math.max(10, Math.min(MAP_WIDTH - 10, player.pos.x));
+            player.pos.y = Math.max(10, Math.min(MAP_HEIGHT - 10, player.pos.y));
+
+            // kick_trail: 业火之路 - 飞行轨迹留下持续伤害的火焰
+            if (player.passives.includes('kick_trail') && Math.floor(timeRef.current) % 3 === 0) {
+                ents.projectiles.push({
+                    id: Math.random().toString(36).substr(2, 9),
+                    position: { x: player.pos.x, y: player.pos.y },
+                    velocity: { x: 0, y: 0 },
+                    radius: 30,
+                    color: '#ff4500',
+                    damage: player.activeSkill!.baseDamage * player.stats.might * 0.3,
+                    duration: 60,
+                    maxDuration: 60,
+                    penetration: 999,
+                    knockback: 0,
+                    sprite: '🔥'
+                });
+            }
+
+            // 冲刺过程中造成伤害
+            let killedCount = 0;
+            ents.enemies.forEach(e => {
+                if (!e) return;
+                const eDist = Math.hypot(e.position.x - player.pos.x, e.position.y - player.pos.y);
+                if (eDist < 60 && e.hp > 0) {
+                    const dmg = player.activeSkill!.baseDamage * player.stats.might * damageMultiplier;
+                    const wasAlive = e.hp > 0;
+                    e.hp -= dmg;
+
+                    // kick_burn: 永恒之火 - 命中的敌人持续燃烧
+                    if (player.passives.includes('kick_burn')) {
+                        // Mark enemy for burning (we'll handle this in enemy update)
+                        e.burnDuration = 180; // 3 seconds
+                        e.burnDamage = dmg * 0.1; // 10% per tick
+                    }
+
+                    ents.damageNumbers.push({
+                        id: Math.random().toString(),
+                        position: {...e.position},
+                        value: Math.floor(dmg),
+                        life: 30,
+                        isCrit: false
+                    });
+
+                    // kick_reset: 死神之舞 - 击杀敌人立即刷新冷却时间
+                    if (player.passives.includes('kick_reset') && wasAlive && e.hp <= 0) {
+                        killedCount++;
+                    }
+
+                    // 击退
+                    const kAngle = Math.atan2(e.position.y - player.pos.y, e.position.x - player.pos.x);
+                    e.velocity.x += Math.cos(kAngle) * 15;
+                    e.velocity.y += Math.sin(kAngle) * 15;
+                }
+            });
+
+            // 如果击杀了敌人，刷新CD
+            if (killedCount > 0 && player.passives.includes('kick_reset')) {
+                player.activeSkillCooldown = 0;
+            }
+
+            // kick_invuln: 不死之身 - 飞行过程中获得无敌时间
+            if (player.passives.includes('kick_invuln')) {
+                player.invulnTimer = Math.max(player.invulnTimer, 5);
+            }
+        } else {
+            // 到达目标，结束冲刺
+            player.isDashing = false;
+
+            // kick_explosion: 燃尽一切 - 着陆时产生火焰爆炸
+            if (player.passives.includes('kick_explosion')) {
+                ents.enemies.forEach(e => {
+                    if (!e) return;
+                    const eDist = Math.hypot(e.position.x - player.pos.x, e.position.y - player.pos.y);
+                    if (eDist < 150 && e.hp > 0) {
+                        const dmg = player.activeSkill!.baseDamage * player.stats.might * 0.5;
+                        e.hp -= dmg;
+                        ents.damageNumbers.push({
+                            id: Math.random().toString(),
+                            position: {...e.position},
+                            value: Math.floor(dmg),
+                            life: 30,
+                            isCrit: true
+                        });
+                    }
+                });
+                triggerScreenShake(15, 20);
+            }
+        }
+    }
+
     // Spawn Enemies - 限制最大敌人数量
     const MAX_ENEMIES = 200;  // 最大敌人数量
     const seconds = timeRef.current / FPS;
     let currentWave = WAVES[0];
     for(const w of WAVES) { if (seconds >= w.time) currentWave = w; }
+
+    // Spawn Bosses at specific times
+    if (seconds >= BOSS_CONFIGS.cirno.spawnTime && !bossSpawnedRef.current.cirno) {
+        const angle = Math.random() * Math.PI * 2;
+        const r = 600;
+        ents.enemies.push({
+            id: 'boss_cirno',
+            position: { x: player.pos.x + Math.cos(angle)*r, y: player.pos.y + Math.sin(angle)*r },
+            velocity: { x: 0, y: 0 },
+            radius: BOSS_CONFIGS.cirno.radius,
+            color: BOSS_CONFIGS.cirno.color,
+            hp: BOSS_CONFIGS.cirno.hp,
+            maxHp: BOSS_CONFIGS.cirno.hp,
+            damage: BOSS_CONFIGS.cirno.damage,
+            speed: BOSS_CONFIGS.cirno.speed,
+            type: 'boss',
+            expValue: BOSS_CONFIGS.cirno.expValue,
+            frozen: 0,
+            isBoss: true,
+            bossName: BOSS_CONFIGS.cirno.name,
+            bossType: 'cirno',
+            attackPattern: 0,
+            patternTimer: 0
+        });
+        bossSpawnedRef.current.cirno = true;
+        triggerScreenShake(20, 30);
+    }
+
+    if (seconds >= BOSS_CONFIGS.youmu.spawnTime && !bossSpawnedRef.current.youmu) {
+        const angle = Math.random() * Math.PI * 2;
+        const r = 600;
+        ents.enemies.push({
+            id: 'boss_youmu',
+            position: { x: player.pos.x + Math.cos(angle)*r, y: player.pos.y + Math.sin(angle)*r },
+            velocity: { x: 0, y: 0 },
+            radius: BOSS_CONFIGS.youmu.radius,
+            color: BOSS_CONFIGS.youmu.color,
+            hp: BOSS_CONFIGS.youmu.hp,
+            maxHp: BOSS_CONFIGS.youmu.hp,
+            damage: BOSS_CONFIGS.youmu.damage,
+            speed: BOSS_CONFIGS.youmu.speed,
+            type: 'boss',
+            expValue: BOSS_CONFIGS.youmu.expValue,
+            frozen: 0,
+            isBoss: true,
+            bossName: BOSS_CONFIGS.youmu.name,
+            bossType: 'youmu',
+            attackPattern: 0,
+            patternTimer: 0
+        });
+        bossSpawnedRef.current.youmu = true;
+        triggerScreenShake(25, 40);
+    }
+
+    if (seconds >= BOSS_CONFIGS.kaguya.spawnTime && !bossSpawnedRef.current.kaguya) {
+        const angle = Math.random() * Math.PI * 2;
+        const r = 600;
+        ents.enemies.push({
+            id: 'boss_kaguya',
+            position: { x: player.pos.x + Math.cos(angle)*r, y: player.pos.y + Math.sin(angle)*r },
+            velocity: { x: 0, y: 0 },
+            radius: BOSS_CONFIGS.kaguya.radius,
+            color: BOSS_CONFIGS.kaguya.color,
+            hp: BOSS_CONFIGS.kaguya.hp,
+            maxHp: BOSS_CONFIGS.kaguya.hp,
+            damage: BOSS_CONFIGS.kaguya.damage,
+            speed: BOSS_CONFIGS.kaguya.speed,
+            type: 'boss',
+            expValue: BOSS_CONFIGS.kaguya.expValue,
+            frozen: 0,
+            isBoss: true,
+            bossName: BOSS_CONFIGS.kaguya.name,
+            bossType: 'kaguya',
+            attackPattern: 0,
+            patternTimer: 0
+        });
+        bossSpawnedRef.current.kaguya = true;
+        triggerScreenShake(30, 50);
+    }
 
     if (ents.enemies.length < MAX_ENEMIES && Math.floor(timeRef.current) % Math.max(1, Math.floor(currentWave.interval / dt)) === 0) {
         const angle = Math.random() * Math.PI * 2;
@@ -605,7 +864,566 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             });
             if (!target) target = player.facing;
 
-            const projs = w.onFire(player.pos, target, player.stats, timeRef.current);
+            let projs = w.onFire(player.pos, target, player.stats, timeRef.current);
+
+            // Apply weapon-specific upgrades based on w.id and player.passives
+            const weaponUpgrades = (w.upgrades || []);
+
+            // Fire Bird upgrades
+            if (w.id === 'fire_bird') {
+                if (weaponUpgrades.includes('bird_pierce')) {
+                    projs.forEach(p => p.penetration += 3);
+                }
+                if (weaponUpgrades.includes('bird_homing')) {
+                    projs.forEach(p => p.homingStrength = 0.15);
+                }
+                if (weaponUpgrades.includes('bird_split')) {
+                    projs.forEach(p => {
+                        p.onHitEffect = 'split';
+                        p.splitCount = 3;
+                        p.splitAngleSpread = Math.PI * 0.8;
+                    });
+                }
+                if (weaponUpgrades.includes('bird_count')) {
+                    const extraProjs = [];
+                    projs.forEach(p => {
+                        for (let i = 0; i < 2; i++) {
+                            const offset = (i + 1) * 0.3 * (Math.random() > 0.5 ? 1 : -1);
+                            const angle = Math.atan2(p.velocity.y, p.velocity.x) + offset;
+                            const speed = Math.hypot(p.velocity.x, p.velocity.y);
+                            extraProjs.push({
+                                ...p,
+                                id: Math.random().toString(36).substr(2, 9),
+                                velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed }
+                            });
+                        }
+                    });
+                    projs.push(...extraProjs);
+                }
+                if (weaponUpgrades.includes('bird_size')) {
+                    projs.forEach(p => {
+                        p.radius *= 2;
+                        p.damage *= 2;
+                    });
+                }
+                if (weaponUpgrades.includes('bird_bounce')) {
+                    projs.forEach(p => {
+                        p.bounceCount = 3;
+                    });
+                }
+                if (weaponUpgrades.includes('bird_rapid')) {
+                    w.cooldownMax *= 0.3; // -70%
+                }
+                if (weaponUpgrades.includes('bird_nova')) {
+                    projs.forEach(p => {
+                        p.explosionRadius = 120;
+                        p.explosionDamage = p.damage * 0.8;
+                    });
+                }
+            }
+
+            // Phoenix Wings upgrades
+            if (w.id === 'phoenix_wings') {
+                if (weaponUpgrades.includes('wings_count')) {
+                    // Add 2 more wings (total 6)
+                    if (projs.length === 4) {
+                        for (let i = 0; i < 2; i++) {
+                            const angle = (i + 4) * (Math.PI / 3); // 6 wings evenly distributed
+                            projs.push({
+                                ...projs[0],
+                                id: Math.random().toString(36).substr(2, 9),
+                                orbitAngle: angle
+                            });
+                        }
+                    }
+                }
+                if (weaponUpgrades.includes('wings_damage')) {
+                    projs.forEach(p => p.damage *= 1.5);
+                }
+                if (weaponUpgrades.includes('wings_range')) {
+                    projs.forEach(p => {
+                        if (p.orbitRadius) p.orbitRadius *= 1.5;
+                    });
+                }
+            }
+
+            // Homing Amulet upgrades (Reimu)
+            if (w.id === 'homing_amulet') {
+                if (weaponUpgrades.includes('amulet_count')) {
+                    const extraProjs = [];
+                    for (let i = 0; i < 2; i++) {
+                        projs.forEach(p => {
+                            extraProjs.push({
+                                ...p,
+                                id: Math.random().toString(36).substr(2, 9),
+                                velocity: { x: p.velocity.x + (Math.random() - 0.5) * 2, y: p.velocity.y + (Math.random() - 0.5) * 2 }
+                            });
+                        });
+                    }
+                    projs.push(...extraProjs);
+                }
+                if (weaponUpgrades.includes('amulet_homing')) {
+                    projs.forEach(p => {
+                        if (p.homingStrength) p.homingStrength *= 2;
+                    });
+                }
+                if (weaponUpgrades.includes('amulet_bounce')) {
+                    projs.forEach(p => {
+                        p.bounceCount = 3;
+                    });
+                }
+                if (weaponUpgrades.includes('amulet_split')) {
+                    projs.forEach(p => {
+                        p.onHitEffect = 'split';
+                        p.splitCount = 2;
+                        p.splitAngleSpread = Math.PI * 0.6;
+                    });
+                }
+                if (weaponUpgrades.includes('amulet_pierce')) {
+                    projs.forEach(p => {
+                        p.penetration += 5;
+                        p.damage *= 1.3;
+                    });
+                }
+                if (weaponUpgrades.includes('amulet_heal')) {
+                    projs.forEach(p => {
+                        p.onHitEffect = 'heal';
+                        p.healAmount = 1;
+                    });
+                }
+                if (weaponUpgrades.includes('amulet_explosion')) {
+                    projs.forEach(p => {
+                        p.explosionRadius = 60;
+                        p.explosionDamage = p.damage * 0.5;
+                    });
+                }
+            }
+
+            // Yin Yang Orb upgrades (Reimu)
+            if (w.id === 'yin_yang_orb') {
+                if (weaponUpgrades.includes('orb_size')) {
+                    projs.forEach(p => {
+                        p.radius *= 2;
+                        p.damage *= 2;
+                    });
+                }
+                if (weaponUpgrades.includes('orb_multi')) {
+                    const extra = {
+                        ...projs[0],
+                        id: Math.random().toString(36).substr(2, 9),
+                        velocity: { x: projs[0].velocity.x * -0.5, y: projs[0].velocity.y }
+                    };
+                    projs.push(extra);
+                }
+            }
+
+            // Boundary upgrades (Reimu)
+            if (w.id === 'boundary') {
+                if (weaponUpgrades.includes('boundary_size')) {
+                    projs.forEach(p => p.radius *= 1.5);
+                }
+                if (weaponUpgrades.includes('boundary_damage')) {
+                    projs.forEach(p => p.damage *= 2);
+                }
+                if (weaponUpgrades.includes('boundary_duration')) {
+                    projs.forEach(p => p.duration *= 2);
+                }
+            }
+
+            // Star Dust upgrades (Marisa)
+            if (w.id === 'star_dust') {
+                if (weaponUpgrades.includes('star_speed')) {
+                    projs.forEach(p => {
+                        p.velocity.x *= 2;
+                        p.velocity.y *= 2;
+                        p.damage *= 1.3;
+                    });
+                }
+                if (weaponUpgrades.includes('star_pierce')) {
+                    projs.forEach(p => p.penetration += 3);
+                }
+                if (weaponUpgrades.includes('star_homing')) {
+                    projs.forEach(p => p.homingStrength = 0.1);
+                }
+                if (weaponUpgrades.includes('star_rapid')) {
+                    w.cooldownMax *= 0.5;
+                }
+                if (weaponUpgrades.includes('star_explode')) {
+                    projs.forEach(p => {
+                        p.explosionRadius = 60;
+                        p.explosionDamage = p.damage * 0.5;
+                    });
+                }
+            }
+
+            // Laser upgrades (Marisa)
+            if (w.id === 'laser') {
+                if (weaponUpgrades.includes('laser_width')) {
+                    projs.forEach(p => p.radius *= 2);
+                }
+                if (weaponUpgrades.includes('laser_duration')) {
+                    projs.forEach(p => p.duration *= 2);
+                }
+                if (weaponUpgrades.includes('laser_damage')) {
+                    projs.forEach(p => p.damage *= 3);
+                }
+                if (weaponUpgrades.includes('laser_multi')) {
+                    const extras = [];
+                    for (let i = -1; i <= 1; i += 2) {
+                        extras.push({
+                            ...projs[0],
+                            id: Math.random().toString(36).substr(2, 9),
+                            position: { x: projs[0].position.x, y: projs[0].position.y + i * 60 }
+                        });
+                    }
+                    projs.push(...extras);
+                }
+                if (weaponUpgrades.includes('laser_burn')) {
+                    projs.forEach(p => {
+                        p.onHitEffect = 'burn';
+                        p.burnDuration = 150;
+                        p.burnDamage = p.damage * 0.1;
+                    });
+                }
+            }
+
+            // Orreries upgrades (Marisa)
+            if (w.id === 'orreries') {
+                if (weaponUpgrades.includes('orrery_count')) {
+                    if (projs.length === 4) {
+                        for (let i = 0; i < 4; i++) {
+                            const angle = (i + 4) * (Math.PI / 4);
+                            projs.push({
+                                ...projs[0],
+                                id: Math.random().toString(36).substr(2, 9),
+                                orbitAngle: angle
+                            });
+                        }
+                    }
+                }
+                if (weaponUpgrades.includes('orrery_speed')) {
+                    projs.forEach(p => {
+                        if (p.orbitSpeed) p.orbitSpeed *= 2;
+                    });
+                }
+                if (weaponUpgrades.includes('orrery_size')) {
+                    projs.forEach(p => {
+                        p.radius *= 2;
+                        p.damage *= 2;
+                    });
+                }
+            }
+
+            // Knives upgrades (Sakuya)
+            if (w.id === 'knives') {
+                if (weaponUpgrades.includes('knife_count')) {
+                    const extras = [];
+                    for (let i = 0; i < 2; i++) {
+                        projs.forEach(p => {
+                            extras.push({
+                                ...p,
+                                id: Math.random().toString(36).substr(2, 9),
+                                velocity: { x: p.velocity.x * 0.8, y: p.velocity.y + (i - 0.5) * 3 }
+                            });
+                        });
+                    }
+                    projs.push(...extras);
+                }
+                if (weaponUpgrades.includes('knife_bounce')) {
+                    projs.forEach(p => {
+                        p.penetration += 3;
+                    });
+                }
+                if (weaponUpgrades.includes('knife_speed')) {
+                    projs.forEach(p => {
+                        p.velocity.x *= 2.5;
+                        p.velocity.y *= 2.5;
+                    });
+                }
+                if (weaponUpgrades.includes('knife_explode')) {
+                    projs.forEach(p => {
+                        p.explosionRadius = 50;
+                        p.explosionDamage = p.damage * 0.4;
+                    });
+                }
+                if (weaponUpgrades.includes('knife_poison')) {
+                    projs.forEach(p => {
+                        p.onHitEffect = 'poison';
+                        p.poisonDuration = 180;
+                        p.poisonDamage = p.damage * 0.1;
+                    });
+                }
+                if (weaponUpgrades.includes('knife_freeze')) {
+                    projs.forEach(p => {
+                        p.onHitEffect = 'freeze';
+                    });
+                }
+            }
+
+            // Time Stop upgrades (Sakuya)
+            if (w.id === 'time_stop') {
+                if (weaponUpgrades.includes('timestop_duration')) {
+                    projs.forEach(p => p.duration += 180); // +3 seconds
+                }
+                if (weaponUpgrades.includes('timestop_cooldown')) {
+                    w.cooldownMax *= 0.6;
+                }
+            }
+
+            // Checkmate upgrades (Sakuya)
+            if (w.id === 'checkmate') {
+                if (weaponUpgrades.includes('checkmate_count')) {
+                    if (projs.length === 8) {
+                        for (let i = 0; i < 8; i++) {
+                            const angle = (i + 8) * (Math.PI * 2 / 16);
+                            projs.push({
+                                ...projs[0],
+                                id: Math.random().toString(36).substr(2, 9),
+                                velocity: {
+                                    x: Math.cos(angle) * 8,
+                                    y: Math.sin(angle) * 8
+                                }
+                            });
+                        }
+                    }
+                }
+                if (weaponUpgrades.includes('checkmate_homing')) {
+                    projs.forEach(p => p.homingStrength = 0.12);
+                }
+                if (weaponUpgrades.includes('checkmate_penetrate')) {
+                    projs.forEach(p => p.penetration += 5);
+                }
+                if (weaponUpgrades.includes('checkmate_rapid')) {
+                    w.cooldownMax *= 0.3;
+                }
+            }
+
+            // Spoon upgrades (Yuma)
+            if (w.id === 'spoon') {
+                if (weaponUpgrades.includes('spoon_size')) {
+                    projs.forEach(p => {
+                        p.radius *= 2;
+                        p.damage *= 2;
+                    });
+                }
+                if (weaponUpgrades.includes('spoon_speed')) {
+                    projs.forEach(p => {
+                        p.velocity.x *= 2;
+                        p.velocity.y *= 2;
+                    });
+                }
+                if (weaponUpgrades.includes('spoon_multi')) {
+                    const extras = [];
+                    for (let i = 0; i < 2; i++) {
+                        const angle = Math.atan2(projs[0].velocity.y, projs[0].velocity.x) + (i + 1) * 0.3 * (Math.random() > 0.5 ? 1 : -1);
+                        const speed = Math.hypot(projs[0].velocity.x, projs[0].velocity.y);
+                        extras.push({
+                            ...projs[0],
+                            id: Math.random().toString(36).substr(2, 9),
+                            velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed }
+                        });
+                    }
+                    projs.push(...extras);
+                }
+                if (weaponUpgrades.includes('spoon_heal')) {
+                    projs.forEach(p => {
+                        p.onHitEffect = 'heal';
+                        p.healAmount = 3;
+                    });
+                }
+                if (weaponUpgrades.includes('spoon_explosion')) {
+                    projs.forEach(p => {
+                        p.explosionRadius = 80;
+                        p.explosionDamage = p.damage * 0.6;
+                    });
+                }
+            }
+
+            // Fangs upgrades (Yuma)
+            if (w.id === 'fangs') {
+                if (weaponUpgrades.includes('fang_size')) {
+                    projs.forEach(p => p.radius *= 2);
+                }
+                if (weaponUpgrades.includes('fang_duration')) {
+                    projs.forEach(p => p.duration *= 3);
+                }
+                if (weaponUpgrades.includes('fang_rapid')) {
+                    w.cooldownMax *= 0.5;
+                }
+                if (weaponUpgrades.includes('fang_heal')) {
+                    projs.forEach(p => {
+                        p.onHitEffect = 'heal';
+                        p.healAmount = Math.floor(p.damage * 0.5);
+                    });
+                }
+                if (weaponUpgrades.includes('fang_stun')) {
+                    projs.forEach(p => {
+                        p.onHitEffect = 'stun';
+                        p.stunDuration = 120;
+                    });
+                }
+                if (weaponUpgrades.includes('fang_chain')) {
+                    projs.forEach(p => {
+                        p.chainCount = 3;
+                        p.chainRange = 200;
+                    });
+                }
+            }
+
+            // Black Hole upgrades (Yuma)
+            if (w.id === 'black_hole') {
+                if (weaponUpgrades.includes('hole_size')) {
+                    projs.forEach(p => p.radius *= 2);
+                }
+                if (weaponUpgrades.includes('hole_duration')) {
+                    projs.forEach(p => p.duration *= 2);
+                }
+                if (weaponUpgrades.includes('hole_damage')) {
+                    projs.forEach(p => p.damage *= 3);
+                }
+                if (weaponUpgrades.includes('hole_multi')) {
+                    const extra = {
+                        ...projs[0],
+                        id: Math.random().toString(36).substr(2, 9),
+                        position: {
+                            x: projs[0].position.x + (Math.random() - 0.5) * 400,
+                            y: projs[0].position.y + (Math.random() - 0.5) * 400
+                        }
+                    };
+                    projs.push(extra);
+                }
+            }
+
+            // Mines upgrades (Koishi)
+            if (w.id === 'mines') {
+                if (weaponUpgrades.includes('mine_count')) {
+                    const extras = [];
+                    for (let i = 0; i < 2; i++) {
+                        projs.forEach(p => {
+                            extras.push({
+                                ...p,
+                                id: Math.random().toString(36).substr(2, 9),
+                                position: {
+                                    x: p.position.x + (Math.random() - 0.5) * 100,
+                                    y: p.position.y + (Math.random() - 0.5) * 100
+                                }
+                            });
+                        });
+                    }
+                    projs.push(...extras);
+                }
+                if (weaponUpgrades.includes('mine_damage')) {
+                    projs.forEach(p => p.damage *= 2.5);
+                }
+                if (weaponUpgrades.includes('mine_range')) {
+                    projs.forEach(p => p.radius *= 2);
+                }
+            }
+
+            // Whip upgrades (Koishi)
+            if (w.id === 'whip') {
+                if (weaponUpgrades.includes('whip_speed')) {
+                    w.cooldownMax *= 0.5;
+                }
+                if (weaponUpgrades.includes('whip_multi')) {
+                    // Find 3 targets instead of 1
+                    const targets = [];
+                    ents.enemies.forEach(e => {
+                        if (!e) return;
+                        const d = Math.hypot(e.position.x - player.pos.x, e.position.y - player.pos.y);
+                        if (d < 500) targets.push(e);
+                    });
+                    targets.sort((a, b) => {
+                        const dA = Math.hypot(a.position.x - player.pos.x, a.position.y - player.pos.y);
+                        const dB = Math.hypot(b.position.x - player.pos.x, b.position.y - player.pos.y);
+                        return dA - dB;
+                    });
+                    const extras = [];
+                    for (let i = 1; i < Math.min(3, targets.length); i++) {
+                        const t = targets[i];
+                        const dir = { x: t.position.x - player.pos.x, y: t.position.y - player.pos.y };
+                        const len = Math.hypot(dir.x, dir.y);
+                        if (len > 0) {
+                            extras.push({
+                                ...projs[0],
+                                id: Math.random().toString(36).substr(2, 9),
+                                velocity: { x: dir.x / len * 15, y: dir.y / len * 15 }
+                            });
+                        }
+                    }
+                    projs.push(...extras);
+                }
+                if (weaponUpgrades.includes('whip_poison')) {
+                    projs.forEach(p => {
+                        p.onHitEffect = 'poison';
+                        p.poisonDuration = 200;
+                        p.poisonDamage = p.damage * 0.15;
+                    });
+                }
+                if (weaponUpgrades.includes('whip_chain')) {
+                    projs.forEach(p => {
+                        p.chainCount = 5;
+                        p.chainRange = 250;
+                    });
+                }
+            }
+
+            // Fire Pillars upgrades (Koishi)
+            if (w.id === 'fire_pillars') {
+                if (weaponUpgrades.includes('pillar_count')) {
+                    const extras = [];
+                    for (let i = 0; i < 4; i++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        extras.push({
+                            ...projs[0],
+                            id: Math.random().toString(36).substr(2, 9),
+                            velocity: { x: Math.cos(angle) * 5, y: Math.sin(angle) * 5 }
+                        });
+                    }
+                    projs.push(...extras);
+                }
+                if (weaponUpgrades.includes('pillar_size')) {
+                    projs.forEach(p => {
+                        p.radius *= 2;
+                        p.damage *= 2;
+                    });
+                }
+                if (weaponUpgrades.includes('pillar_duration')) {
+                    projs.forEach(p => p.duration *= 2);
+                }
+            }
+
+            // 应用属性升级
+            // 增加贯穿
+            if (player.passives.includes('penetration_boost')) {
+                projs.forEach(p => {
+                    if (!p.isLaser && !p.orbitRadius) {
+                        p.penetration += 1;
+                    }
+                });
+            }
+
+            // 增加弹幕数量（复制弹幕并偏移角度）
+            const projectileCountBoosts = player.passives.filter(p => p === 'projectile_count_boost').length;
+            if (projectileCountBoosts > 0 && projs.length > 0) {
+                const additionalProjs: typeof projs = [];
+                projs.forEach(p => {
+                    if (!p.orbitRadius && !p.isLaser && !p.isTimeStop && !p.isBlackHole) {
+                        for (let i = 0; i < projectileCountBoosts; i++) {
+                            const offset = (i + 1) * 0.15 * (Math.random() > 0.5 ? 1 : -1);
+                            const speed = Math.hypot(p.velocity.x, p.velocity.y);
+                            const angle = Math.atan2(p.velocity.y, p.velocity.x) + offset;
+                            additionalProjs.push({
+                                ...p,
+                                id: Math.random().toString(36).substr(2, 9),
+                                velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed }
+                            });
+                        }
+                    }
+                });
+                projs.push(...additionalProjs);
+            }
+
             ents.projectiles.push(...projs);
             w.cooldownTimer = w.cooldownMax * player.stats.cooldown;
         }
@@ -724,6 +1542,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (hit) {
                 if (e.hp > 0) {
                     const dmg = p.damage;
+                    const wasAlive = e.hp > 0;
                     e.hp -= dmg;
                     ents.damageNumbers.push({ id: Math.random().toString(), position: {...e.position}, value: Math.floor(dmg), life: 30, isCrit: false });
 
@@ -738,6 +1557,132 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                       }
                     }
 
+                    // Apply status effects
+                    if (p.onHitEffect === 'burn' || p.burnDuration) {
+                        e.burnDuration = p.burnDuration || 120;
+                        e.burnDamage = p.burnDamage || dmg * 0.1;
+                    }
+                    if (p.onHitEffect === 'poison' || p.poisonDuration) {
+                        e.poisonDuration = p.poisonDuration || 180;
+                        e.poisonDamage = p.poisonDamage || dmg * 0.05;
+                    }
+                    if (p.onHitEffect === 'stun' || p.stunDuration) {
+                        e.stunDuration = p.stunDuration || 60;
+                    }
+                    if (p.onHitEffect === 'freeze') {
+                        e.frozen = 120;
+                    }
+                    if (p.onHitEffect === 'heal' || p.healAmount) {
+                        player.stats.hp = Math.min(player.stats.maxHp, player.stats.hp + (p.healAmount || 1));
+                    }
+
+                    // Handle split projectiles
+                    if (p.onHitEffect === 'split' && p.splitCount) {
+                        const angleStep = (p.splitAngleSpread || Math.PI) / p.splitCount;
+                        const baseAngle = Math.atan2(p.velocity.y, p.velocity.x);
+                        for (let j = 0; j < p.splitCount; j++) {
+                            const angle = baseAngle + (j - p.splitCount / 2) * angleStep;
+                            const speed = Math.hypot(p.velocity.x, p.velocity.y) * 0.7;
+                            ents.projectiles.push({
+                                ...p,
+                                id: Math.random().toString(36).substr(2, 9),
+                                position: { ...e.position },
+                                velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
+                                duration: p.duration * 0.7,
+                                damage: p.damage * 0.6,
+                                onHitEffect: undefined, // Don't chain splits
+                                splitCount: undefined
+                            });
+                        }
+                    }
+
+                    // Handle bounce projectiles
+                    if (p.bounceCount && p.bounceCount > 0) {
+                        if (!p.bouncedEnemies) p.bouncedEnemies = new Set();
+                        p.bouncedEnemies.add(e.id);
+
+                        // Find nearest enemy not yet bounced to
+                        let nearestDist = Infinity;
+                        let nearestEnemy = null;
+                        ents.enemies.forEach(ne => {
+                            if (!ne || ne.id === e.id || p.bouncedEnemies!.has(ne.id)) return;
+                            const dist = Math.hypot(ne.position.x - e.position.x, ne.position.y - e.position.y);
+                            if (dist < 300 && dist < nearestDist) {
+                                nearestDist = dist;
+                                nearestEnemy = ne;
+                            }
+                        });
+
+                        if (nearestEnemy) {
+                            const dx = nearestEnemy.position.x - e.position.x;
+                            const dy = nearestEnemy.position.y - e.position.y;
+                            const len = Math.hypot(dx, dy);
+                            const speed = Math.hypot(p.velocity.x, p.velocity.y);
+                            p.velocity.x = (dx / len) * speed;
+                            p.velocity.y = (dy / len) * speed;
+                            p.position.x = e.position.x;
+                            p.position.y = e.position.y;
+                            p.bounceCount--;
+                        } else {
+                            p.bounceCount = 0;
+                        }
+                    }
+
+                    // Handle chain lightning
+                    if (p.chainCount && p.chainCount > 0) {
+                        if (!p.chainedEnemies) p.chainedEnemies = new Set();
+                        p.chainedEnemies.add(e.id);
+
+                        const chainRange = p.chainRange || 200;
+                        let nearestDist = Infinity;
+                        let nearestEnemy = null;
+                        ents.enemies.forEach(ne => {
+                            if (!ne || ne.id === e.id || p.chainedEnemies!.has(ne.id)) return;
+                            const dist = Math.hypot(ne.position.x - e.position.x, ne.position.y - e.position.y);
+                            if (dist < chainRange && dist < nearestDist) {
+                                nearestDist = dist;
+                                nearestEnemy = ne;
+                            }
+                        });
+
+                        if (nearestEnemy) {
+                            nearestEnemy.hp -= p.damage * 0.8;
+                            ents.damageNumbers.push({
+                                id: Math.random().toString(),
+                                position: {...nearestEnemy.position},
+                                value: Math.floor(p.damage * 0.8),
+                                life: 30,
+                                isCrit: false
+                            });
+                            p.chainCount--;
+                            p.position.x = nearestEnemy.position.x;
+                            p.position.y = nearestEnemy.position.y;
+                        } else {
+                            p.chainCount = 0;
+                        }
+                    }
+
+                    // Handle explosion on hit
+                    if (p.onHitEffect === 'explode' || p.explosionRadius) {
+                        const explRadius = p.explosionRadius || 80;
+                        const explDamage = p.explosionDamage || p.damage * 0.5;
+                        ents.enemies.forEach(ne => {
+                            if (!ne) return;
+                            const dist = Math.hypot(ne.position.x - e.position.x, ne.position.y - e.position.y);
+                            if (dist < explRadius) {
+                                ne.hp -= explDamage;
+                                ents.damageNumbers.push({
+                                    id: Math.random().toString(),
+                                    position: {...ne.position},
+                                    value: Math.floor(explDamage),
+                                    life: 30,
+                                    isCrit: true
+                                });
+                            }
+                        });
+                        triggerScreenShake(8, 12);
+                    }
+
                     if (p.knockback) {
                         const kAngle = Math.atan2(e.position.y - p.position.y, e.position.x - p.position.x);
                         e.velocity.x += Math.cos(kAngle) * p.knockback;
@@ -749,10 +1694,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 }
 
                 if (!p.isLaser && !p.isBlackHole && !p.orbitRadius) {
-                    p.penetration--;
-                    if (p.penetration <= 0) {
-                        ents.projectiles.splice(i, 1);
-                        break;
+                    // Don't consume penetration for bounce/chain projectiles until they're done
+                    if ((!p.bounceCount || p.bounceCount <= 0) && (!p.chainCount || p.chainCount <= 0)) {
+                        p.penetration--;
+                        if (p.penetration <= 0) {
+                            ents.projectiles.splice(i, 1);
+                            break;
+                        }
                     }
                 }
             }
@@ -775,7 +1723,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
     }
 
-    // Enemies - 清理离玩家太远的敌人
+    // Enemies
     for (let i = ents.enemies.length - 1; i >= 0; i--) {
         const e = ents.enemies[i];
 
@@ -784,12 +1732,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             continue;
         }
 
-        // 删除距离玩家太远的敌人（超过2倍屏幕宽度）
         const distToPlayer = Math.hypot(e.position.x - player.pos.x, e.position.y - player.pos.y);
-        if (distToPlayer > CANVAS_WIDTH * 2) {
-            ents.enemies.splice(i, 1);
-            continue;
-        }
 
         // Death
         if (e.hp <= 0) {
@@ -810,9 +1753,45 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             continue;
         }
 
+        // Handle status effects
         if (e.frozen > 0) {
             e.frozen -= dt;
             continue;
+        }
+
+        if (e.stunDuration && e.stunDuration > 0) {
+            e.stunDuration -= dt;
+            continue; // Stunned enemies can't move
+        }
+
+        // Apply burn damage
+        if (e.burnDuration && e.burnDuration > 0) {
+            e.burnDuration -= dt;
+            if (Math.floor(timeRef.current) % 20 === 0) { // Every ~0.33 seconds
+                e.hp -= e.burnDamage || 0;
+                ents.damageNumbers.push({
+                    id: Math.random().toString(),
+                    position: {...e.position},
+                    value: Math.floor(e.burnDamage || 0),
+                    life: 20,
+                    isCrit: false
+                });
+            }
+        }
+
+        // Apply poison damage
+        if (e.poisonDuration && e.poisonDuration > 0) {
+            e.poisonDuration -= dt;
+            if (Math.floor(timeRef.current) % 30 === 0) { // Every ~0.5 seconds
+                e.hp -= e.poisonDamage || 0;
+                ents.damageNumbers.push({
+                    id: Math.random().toString(),
+                    position: {...e.position},
+                    value: Math.floor(e.poisonDamage || 0),
+                    life: 20,
+                    isCrit: false
+                });
+            }
         }
 
         // Move
@@ -849,6 +1828,196 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
             e.position.x += e.velocity.x * dt;
             e.position.y += e.velocity.y * dt;
+        } else if (e.isBoss && e.bossType) {
+            // Boss AI and Danmaku patterns
+            e.patternTimer = (e.patternTimer || 0) + dt;
+
+            // Boss movement - circle around player at medium distance
+            const targetDist = 400;
+            if (dist > targetDist + 100) {
+                if (dist > 0) {
+                    e.velocity.x += (dx/dist) * 0.08 * dt;
+                    e.velocity.y += (dy/dist) * 0.08 * dt;
+                }
+            } else if (dist < targetDist - 100) {
+                if (dist > 0) {
+                    e.velocity.x -= (dx/dist) * 0.08 * dt;
+                    e.velocity.y -= (dy/dist) * 0.08 * dt;
+                }
+            } else {
+                // Circle around player
+                const perpAngle = Math.atan2(dy, dx) + Math.PI / 2;
+                e.velocity.x += Math.cos(perpAngle) * 0.05 * dt;
+                e.velocity.y += Math.sin(perpAngle) * 0.05 * dt;
+            }
+
+            const spd = Math.hypot(e.velocity.x, e.velocity.y);
+            if (spd > e.speed) {
+                e.velocity.x = (e.velocity.x/spd) * e.speed;
+                e.velocity.y = (e.velocity.y/spd) * e.speed;
+            }
+
+            e.position.x += e.velocity.x * dt;
+            e.position.y += e.velocity.y * dt;
+
+            // Boss attack patterns
+            if (e.bossType === 'cirno') {
+                // 琪露诺 - 冰弹幕
+                // Pattern 1: 环形冰弹
+                if (e.patternTimer! >= 90 && e.attackPattern === 0) {
+                    const bulletCount = 16;
+                    for (let i = 0; i < bulletCount; i++) {
+                        const angle = (i / bulletCount) * Math.PI * 2;
+                        ents.projectiles.push({
+                            id: Math.random().toString(36).substr(2, 9),
+                            position: { x: e.position.x, y: e.position.y },
+                            velocity: { x: Math.cos(angle) * 4, y: Math.sin(angle) * 4 },
+                            radius: 10,
+                            color: '#00ffff',
+                            damage: e.damage * 0.6,
+                            duration: 200,
+                            maxDuration: 200,
+                            penetration: 1,
+                            knockback: 0,
+                            sprite: '❄️',
+                            isEnemyProjectile: true
+                        });
+                    }
+                    e.attackPattern = 1;
+                    e.patternTimer = 0;
+                }
+                // Pattern 2: 螺旋冰弹
+                else if (e.patternTimer! >= 60 && e.attackPattern === 1) {
+                    const spiralCount = 3;
+                    const baseAngle = (timeRef.current * 0.05) % (Math.PI * 2);
+                    for (let i = 0; i < spiralCount; i++) {
+                        const angle = baseAngle + (i / spiralCount) * Math.PI * 2;
+                        ents.projectiles.push({
+                            id: Math.random().toString(36).substr(2, 9),
+                            position: { x: e.position.x, y: e.position.y },
+                            velocity: { x: Math.cos(angle) * 5, y: Math.sin(angle) * 5 },
+                            radius: 12,
+                            color: '#87ceeb',
+                            damage: e.damage * 0.7,
+                            duration: 180,
+                            maxDuration: 180,
+                            penetration: 1,
+                            knockback: 0,
+                            sprite: '❅',
+                            isEnemyProjectile: true
+                        });
+                    }
+                    e.attackPattern = 0;
+                    e.patternTimer = 0;
+                }
+            } else if (e.bossType === 'youmu') {
+                // 魂魄妖梦 - 剑气弹幕
+                // Pattern 1: 扇形剑气
+                if (e.patternTimer! >= 100 && e.attackPattern === 0) {
+                    const fanCount = 9;
+                    const shootAngle = Math.atan2(dy, dx);
+                    for (let i = 0; i < fanCount; i++) {
+                        const spreadAngle = shootAngle + ((i - (fanCount - 1) / 2) * 0.2);
+                        ents.projectiles.push({
+                            id: Math.random().toString(36).substr(2, 9),
+                            position: { x: e.position.x, y: e.position.y },
+                            velocity: { x: Math.cos(spreadAngle) * 7, y: Math.sin(spreadAngle) * 7 },
+                            radius: 8,
+                            color: '#90ee90',
+                            damage: e.damage * 0.8,
+                            duration: 150,
+                            maxDuration: 150,
+                            penetration: 1,
+                            knockback: 0,
+                            sprite: '⚔️',
+                            isEnemyProjectile: true
+                        });
+                    }
+                    e.attackPattern = 1;
+                    e.patternTimer = 0;
+                }
+                // Pattern 2: 十字斩
+                else if (e.patternTimer! >= 80 && e.attackPattern === 1) {
+                    const directions = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
+                    directions.forEach(angle => {
+                        for (let j = 0; j < 5; j++) {
+                            setTimeout(() => {
+                                ents.projectiles.push({
+                                    id: Math.random().toString(36).substr(2, 9),
+                                    position: { x: e.position.x, y: e.position.y },
+                                    velocity: { x: Math.cos(angle) * 8, y: Math.sin(angle) * 8 },
+                                    radius: 15,
+                                    color: '#98fb98',
+                                    damage: e.damage * 0.9,
+                                    duration: 120,
+                                    maxDuration: 120,
+                                    penetration: 1,
+                                    knockback: 5,
+                                    sprite: '🗡️',
+                                    isEnemyProjectile: true
+                                });
+                            }, j * 50);
+                        }
+                    });
+                    e.attackPattern = 0;
+                    e.patternTimer = 0;
+                }
+            } else if (e.bossType === 'kaguya') {
+                // 蓬莱山辉夜 - 五彩弹幕
+                // Pattern 1: 五色环形弹
+                if (e.patternTimer! >= 120 && e.attackPattern === 0) {
+                    const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff'];
+                    const rings = 5;
+                    const bulletsPerRing = 20;
+                    for (let ring = 0; ring < rings; ring++) {
+                        setTimeout(() => {
+                            for (let i = 0; i < bulletsPerRing; i++) {
+                                const angle = (i / bulletsPerRing) * Math.PI * 2 + (ring * 0.3);
+                                ents.projectiles.push({
+                                    id: Math.random().toString(36).substr(2, 9),
+                                    position: { x: e.position.x, y: e.position.y },
+                                    velocity: { x: Math.cos(angle) * (3 + ring * 0.5), y: Math.sin(angle) * (3 + ring * 0.5) },
+                                    radius: 11,
+                                    color: colors[ring % colors.length],
+                                    damage: e.damage * 0.7,
+                                    duration: 250,
+                                    maxDuration: 250,
+                                    penetration: 1,
+                                    knockback: 0,
+                                    sprite: '●',
+                                    isEnemyProjectile: true
+                                });
+                            }
+                        }, ring * 100);
+                    }
+                    e.attackPattern = 1;
+                    e.patternTimer = 0;
+                }
+                // Pattern 2: 随机彩色弹幕雨
+                else if (e.patternTimer! >= 5 && e.attackPattern === 1) {
+                    const colors = ['#ff69b4', '#ffd700', '#00ced1', '#ff1493', '#7b68ee'];
+                    const randomAngle = Math.random() * Math.PI * 2;
+                    ents.projectiles.push({
+                        id: Math.random().toString(36).substr(2, 9),
+                        position: { x: e.position.x, y: e.position.y },
+                        velocity: { x: Math.cos(randomAngle) * 6, y: Math.sin(randomAngle) * 6 },
+                        radius: 10,
+                        color: colors[Math.floor(Math.random() * colors.length)],
+                        damage: e.damage * 0.5,
+                        duration: 200,
+                        maxDuration: 200,
+                        penetration: 1,
+                        knockback: 0,
+                        sprite: '◆',
+                        isEnemyProjectile: true
+                    });
+                    e.patternTimer = 0;
+                    // Switch back to pattern 0 after some time
+                    if (Math.random() < 0.02) {
+                        e.attackPattern = 0;
+                    }
+                }
+            }
         } else if (e.type === 'elf') {
             const targetDist = 300;
 
@@ -955,7 +2124,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
 
     // Gems - 限制最大宝石数量
-    const MAX_GEMS = 300;  // 最大宝石数量
+    const MAX_GEMS = 500;  // 最大宝石数量（提高上限）
     if (ents.gems.length > MAX_GEMS) {
         // 删除最远的宝石
         ents.gems.sort((a, b) => {
@@ -969,12 +2138,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     for (let i = ents.gems.length - 1; i >= 0; i--) {
         const g = ents.gems[i];
         const dist = Math.hypot(player.pos.x - g.position.x, player.pos.y - g.position.y);
-
-        // 删除距离太远的宝石（超过1.5倍屏幕宽度）
-        if (dist > CANVAS_WIDTH * 1.5) {
-            ents.gems.splice(i, 1);
-            continue;
-        }
 
         if (dist < player.stats.pickupRange) {
             g.position.x += (player.pos.x - g.position.x) * 0.1 * dt;
@@ -1033,16 +2196,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   // Render
   const render = useCallback(() => {
-    if (!appRef.current || !appRef.current.stage) return;
+    try {
+      if (!appRef.current || !appRef.current.stage) {
+        console.log('Render blocked: app or stage not ready');
+        return;
+      }
 
-    // Check if all containers are initialized
-    if (!backgroundContainerRef.current || !shadowContainerRef.current ||
-        !entityContainerRef.current || !effectContainerRef.current ||
-        !uiContainerRef.current) {
-      return;
-    }
+      // Check if all containers are initialized
+      if (!backgroundContainerRef.current || !shadowContainerRef.current ||
+          !entityContainerRef.current || !effectContainerRef.current ||
+          !uiContainerRef.current) {
+        console.log('Render blocked: containers not ready');
+        return;
+      }
 
-    const camera = cameraRef.current;
+      // Debug: log first render
+      if (Math.random() < 0.001) {
+        console.log('Rendering frame...');
+      }
+
+      const camera = cameraRef.current;
     const player = playerRef.current;
     const ents = entitiesRef.current;
     const shake = screenShakeRef.current;
@@ -1084,6 +2257,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             sprite.scale.x *= -1;
             sprite.x += targetSize;
           }
+          // 调暗地图颜色
+          sprite.tint = 0x808080; // 50% 灰度，使颜色变暗
           backgroundContainerRef.current.addChild(sprite);
         }
       }
@@ -1212,6 +2387,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const graphics = new PIXI.Graphics();
         graphics.circle(e.position.x, e.position.y, e.radius);
         graphics.fill(e.frozen > 0 ? 0x3498db : e.color);
+
+        // Boss glow effect
+        if (e.isBoss) {
+          const glowIntensity = 0.3 + Math.sin(timeRef.current * 0.1) * 0.2;
+          const glow = new PIXI.Graphics();
+          glow.circle(e.position.x, e.position.y, e.radius * 1.5);
+          glow.fill({ color: e.color, alpha: glowIntensity });
+          entityContainerRef.current.addChild(glow);
+        }
+
         entityContainerRef.current.addChild(graphics);
       }
     });
@@ -1259,7 +2444,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (texture) {
           const sprite = new PIXI.Sprite(texture);
           sprite.anchor.set(0.5);
-          const targetHeight = 180;
+          const targetHeight = 140; // Reduced from 180 to 140
           const scale = targetHeight / texture.height;
           sprite.x = player.pos.x;
           sprite.y = player.pos.y;
@@ -1268,13 +2453,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           entityContainerRef.current.addChild(sprite);
         } else {
           const graphics = new PIXI.Graphics();
-          graphics.circle(player.pos.x, player.pos.y, 30);
+          graphics.circle(player.pos.x, player.pos.y, 22); // Reduced from 30 to 22
           graphics.fill(character.color);
           entityContainerRef.current.addChild(graphics);
         }
       } else {
         const graphics = new PIXI.Graphics();
-        graphics.circle(player.pos.x, player.pos.y, 30);
+        graphics.circle(player.pos.x, player.pos.y, 22); // Reduced from 30 to 22
         graphics.fill(character.color);
         entityContainerRef.current.addChild(graphics);
       }
@@ -1282,6 +2467,66 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Damage Numbers - 清理并销毁旧对象
     uiContainerRef.current.removeChildren().forEach(child => child.destroy());
+
+    // Boss HP bars in UI (top of screen)
+    const activeBosses = ents.enemies.filter(e => e.isBoss && e.bossName);
+    activeBosses.forEach((boss, index) => {
+      const barWidth = 800;
+      const barHeight = 40;
+      const barX = (CANVAS_WIDTH - barWidth) / 2;
+      const barY = 60 + index * 80;
+
+      // Background
+      const bgBar = new PIXI.Graphics();
+      bgBar.rect(barX, barY, barWidth, barHeight);
+      bgBar.fill({ color: 0x000000, alpha: 0.8 });
+      bgBar.stroke({ width: 3, color: 0xffffff });
+      uiContainerRef.current.addChild(bgBar);
+
+      // HP fill
+      const hpPercent = Math.max(0, boss.hp / boss.maxHp);
+      const fillWidth = barWidth * hpPercent;
+      const hpBar = new PIXI.Graphics();
+      hpBar.rect(barX, barY, fillWidth, barHeight);
+
+      let barColor = 0x00ff00;
+      if (hpPercent < 0.3) barColor = 0xff0000;
+      else if (hpPercent < 0.6) barColor = 0xffaa00;
+
+      hpBar.fill({ color: barColor, alpha: 0.9 });
+      uiContainerRef.current.addChild(hpBar);
+
+      // Boss name
+      const nameText = new PIXI.Text({
+        text: boss.bossName,
+        style: {
+          fontSize: 32,
+          fill: 0xffffff,
+          fontWeight: 'bold',
+          stroke: { color: 0x000000, width: 5 }
+        }
+      });
+      nameText.anchor.set(0.5);
+      nameText.x = CANVAS_WIDTH / 2;
+      nameText.y = barY - 30;
+      uiContainerRef.current.addChild(nameText);
+
+      // HP text
+      const hpText = new PIXI.Text({
+        text: `${Math.ceil(boss.hp)} / ${boss.maxHp}`,
+        style: {
+          fontSize: 22,
+          fill: 0xffffff,
+          fontWeight: 'bold',
+          stroke: { color: 0x000000, width: 4 }
+        }
+      });
+      hpText.anchor.set(0.5);
+      hpText.x = CANVAS_WIDTH / 2;
+      hpText.y = barY + barHeight / 2;
+      uiContainerRef.current.addChild(hpText);
+    });
+
     ents.damageNumbers.forEach(d => {
       const text = new PIXI.Text({
         text: d.value.toString(),
@@ -1310,29 +2555,33 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     });
 
-    // 手动触发 PixiJS 渲染
-    if (appRef.current && appRef.current.stage) {
-      appRef.current.renderer.render(appRef.current.stage);
+      // 手动触发 PixiJS 渲染
+      if (appRef.current && appRef.current.stage) {
+        appRef.current.renderer.render(appRef.current.stage);
+      }
+    } catch (error) {
+      console.error('Render error:', error);
     }
-
   }, [character]);
 
-  // Game loop
+  // Game loop - only start after app is initialized
   useEffect(() => {
-    if (!appRef.current) return;
+    // Wait for app to be fully initialized
+    if (!isInitialized) {
+      console.log('Game loop waiting for initialization');
+      return;
+    }
 
+    console.log('Starting game loop...');
     let lastTime = performance.now();
     let animationFrameId: number;
 
     const loop = (time: number) => {
-      // Only run update and render if fully initialized
-      if (initializedRef.current) {
-        const delta = time - lastTime;
-        if (delta >= 1000 / FPS) {
-          update();
-          render();
-          lastTime = time;
-        }
+      const delta = time - lastTime;
+      if (delta >= 1000 / FPS) {
+        update();
+        render();
+        lastTime = time;
       }
       animationFrameId = requestAnimationFrame(loop);
     };
@@ -1340,11 +2589,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     animationFrameId = requestAnimationFrame(loop);
 
     return () => {
+      console.log('Stopping game loop');
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
       }
     };
-  }, [update, render]);
+  }, [update, render, isInitialized]);
 
   return (
     <div className="relative w-full h-screen bg-gray-900 flex items-center justify-center">

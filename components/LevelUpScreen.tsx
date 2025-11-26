@@ -52,7 +52,7 @@ export const LevelUpScreen: React.FC<LevelUpScreenProps> = ({ options, onSelect,
                                 w-16 h-16 rounded flex items-center justify-center text-3xl mr-6 shadow-lg
                                 ${opt.rarity === 'legendary' ? 'bg-yellow-600 text-yellow-100' : 'bg-gray-700 text-white'}
                             `}>
-                                {opt.type === 'weapon' ? '⚔️' : opt.type === 'heal' ? '🍗' : '📘'}
+                                {opt.type === 'weapon_upgrade' ? opt.icon : (opt.type === 'weapon' ? '⚔️' : opt.type === 'heal' ? '🍗' : '📘')}
                             </div>
                             
                             <div className="flex-1">
