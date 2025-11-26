@@ -806,7 +806,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             id: Math.random().toString(),
             position: { x: player.pos.x + Math.cos(angle)*r, y: player.pos.y + Math.sin(angle)*r },
             velocity: { x: 0, y: 0 },
-            radius: currentWave.enemyStats.type === 'boss' ? 60 : 22.5,
+            radius: currentWave.enemyStats.type === 'boss' ? 60 : 20, // Slightly smaller than 22.5
             color: currentWave.enemyStats.color,
             hp: currentWave.enemyStats.hp,
             maxHp: currentWave.enemyStats.hp,
@@ -2021,9 +2021,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Hit Player
-        let playerRadius = 15; // Reduced from 22.5 to 15
+        let playerRadius = 18; // Slightly bigger than 15
         if (character.id === 'mokou') {
-            const targetHeight = 100; // Reduced from 180 to 100
+            const targetHeight = 120; // Slightly bigger than 100
             const isMoving = isMovingRef.current;
             if (isMoving && texturesRef.current.sprite) {
                 const scaleMove = targetHeight / (texturesRef.current.sprite[0].height);
@@ -2384,7 +2384,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (texture) {
           const sprite = new PIXI.Sprite(texture);
           sprite.anchor.set(0.5);
-          const targetHeight = 100; // Reduced from 140 to 100
+          const targetHeight = 120; // Slightly bigger than 100
           const scale = targetHeight / texture.height;
           sprite.x = player.pos.x;
           sprite.y = player.pos.y;
@@ -2393,13 +2393,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           entityContainerRef.current.addChild(sprite);
         } else {
           const graphics = new PIXI.Graphics();
-          graphics.circle(player.pos.x, player.pos.y, 15); // Reduced from 22 to 15
+          graphics.circle(player.pos.x, player.pos.y, 18); // Slightly bigger than 15
           graphics.fill(character.color);
           entityContainerRef.current.addChild(graphics);
         }
       } else {
         const graphics = new PIXI.Graphics();
-        graphics.circle(player.pos.x, player.pos.y, 15); // Reduced from 22 to 15
+        graphics.circle(player.pos.x, player.pos.y, 18); // Slightly bigger than 15
         graphics.fill(character.color);
         entityContainerRef.current.addChild(graphics);
       }

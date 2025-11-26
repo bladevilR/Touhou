@@ -21,99 +21,74 @@ const App: React.FC = () => {
 
   const generateUpgradeOptions = useCallback((currentWeapons: Weapon[], currentPassives: string[], currentHp: number, maxHp: number): UpgradeOption[] => {
     const maxOptions = 3;
-
-    // 1. 优先检查：是否有武器需要深化升级树选择
-    // 在等级 3, 5, 7 时触发升级树选择
-    const weaponsNeedingTreeUpgrade = currentWeapons.filter(w => {
-      const level = w.level;
-      const upgrades = w.upgrades || [];
-
-      // Tier 1: level 3, Tier 2: level 5, Tier 3: level 7
-      if (level === 3 && upgrades.length === 0) return true;
-      if (level === 5 && upgrades.length === 1) return true;
-      if (level === 7 && upgrades.length === 2) return true;
-      return false;
-    });
-
-    // 如果有武器需要升级树选择，强制显示该武器的升级树选项
-    if (weaponsNeedingTreeUpgrade.length > 0) {
-      const weaponToUpgrade = weaponsNeedingTreeUpgrade[0];
-      const upgradeTree = WEAPON_UPGRADE_TREES[weaponToUpgrade.id];
-
-      if (upgradeTree) {
-        const currentTier = (weaponToUpgrade.upgrades || []).length + 1;
-        const availableUpgrades = upgradeTree.filter(u => u.tier === currentTier);
-
-        return availableUpgrades.slice(0, 3).map(upgrade => ({
-          id: upgrade.id,
-          type: 'weapon_upgrade' as any,
-          name: upgrade.name,
-          description: upgrade.description,
-          icon: upgrade.icon,
-          level: currentTier,
-          isNew: true,
-          rarity: currentTier === 3 ? 'legendary' : (currentTier === 2 ? 'rare' : 'common'),
-          weaponId: weaponToUpgrade.id
-        } as any));
-      }
-    }
-
-    // 2. 否则，显示武器升级或新武器选项
     const options: UpgradeOption[] = [];
 
-    // 可升级的现有武器
-    const upgradableWeapons = currentWeapons.filter(w => w.level < w.maxLevel);
+    // 收集所有可用的武器升级树选项
+    const allUpgradeChoices: Array<{weaponId: string, upgrade: any}> = [];
 
-    // 可获取的新武器
-    const newWeaponPool = Object.values(WEAPON_DEFS).filter(def => {
-      const hasIt = currentWeapons.some(cw => cw.id === def.id);
-      if (hasIt) return false;
-      if (def.exclusiveTo && def.exclusiveTo !== selectedCharacter.id) return false;
-      return true;
+    currentWeapons.forEach(weapon => {
+      const upgradeTree = WEAPON_UPGRADE_TREES[weapon.id];
+      if (!upgradeTree) return;
+
+      const currentUpgrades = weapon.upgrades || [];
+
+      // 每个武器有3个tier，每次只能从当前tier选择
+      let currentTier = 1;
+      if (currentUpgrades.length >= 2) currentTier = 3;
+      else if (currentUpgrades.length >= 1) currentTier = 2;
+
+      // 获取该tier下还未选择的升级
+      const tierUpgrades = upgradeTree.filter(u => u.tier === currentTier);
+      tierUpgrades.forEach(upgrade => {
+        if (!currentUpgrades.includes(upgrade.id)) {
+          allUpgradeChoices.push({ weaponId: weapon.id, upgrade });
+        }
+      });
     });
 
-    // 生成3个选项
-    let safetyCounter = 0;
-    while (options.length < maxOptions && safetyCounter < 50) {
-      safetyCounter++;
+    // 随机选择3个不同的升级选项
+    const shuffled = allUpgradeChoices.sort(() => Math.random() - 0.5);
+    for (let i = 0; i < Math.min(maxOptions, shuffled.length); i++) {
+      const choice = shuffled[i];
+      options.push({
+        id: choice.upgrade.id,
+        type: 'weapon_upgrade' as any,
+        name: choice.upgrade.name,
+        description: choice.upgrade.description,
+        icon: choice.upgrade.icon,
+        level: choice.upgrade.tier,
+        isNew: true,
+        rarity: choice.upgrade.tier === 3 ? 'legendary' : (choice.upgrade.tier === 2 ? 'rare' : 'common'),
+        weaponId: choice.weaponId
+      } as any);
+    }
 
-      // 70% 武器升级，30% 新武器
-      const rand = Math.random();
+    // 如果升级选项不足3个，添加新武器选项
+    if (options.length < maxOptions) {
+      const newWeaponPool = Object.values(WEAPON_DEFS).filter(def => {
+        const hasIt = currentWeapons.some(cw => cw.id === def.id);
+        if (hasIt) return false;
+        if (def.exclusiveTo && def.exclusiveTo !== selectedCharacter.id) return false;
+        return true;
+      });
 
-      if (rand < 0.7 && upgradableWeapons.length > 0) {
-        // 武器升级
-        const w = upgradableWeapons[Math.floor(Math.random() * upgradableWeapons.length)];
-        if (!options.find(o => o.id === w.id)) {
-          options.push({
-            id: w.id,
-            type: 'weapon',
-            name: w.name,
-            description: `提升至 LV.${w.level + 1}`,
-            icon: '⚔️',
-            level: w.level,
-            isNew: false,
-            rarity: 'common'
-          });
-        }
-      } else if (newWeaponPool.length > 0) {
-        // 新武器
-        const w = newWeaponPool[Math.floor(Math.random() * newWeaponPool.length)];
-        if (!options.find(o => o.id === w.id)) {
-          options.push({
-            id: w.id,
-            type: 'weapon',
-            name: w.name,
-            description: w.description,
-            icon: '⚔️',
-            level: 0,
-            isNew: true,
-            rarity: 'rare'
-          });
-        }
+      const shuffledWeapons = newWeaponPool.sort(() => Math.random() - 0.5);
+      for (let i = 0; i < Math.min(maxOptions - options.length, shuffledWeapons.length); i++) {
+        const w = shuffledWeapons[i];
+        options.push({
+          id: w.id,
+          type: 'weapon',
+          name: w.name,
+          description: w.description,
+          icon: '⚔️',
+          level: 0,
+          isNew: true,
+          rarity: 'rare'
+        });
       }
     }
 
-    // 如果没有足够选项（所有武器都满级且没有新武器），填充空选项
+    // 如果还是不足3个选项，填充"跳过"
     while (options.length < maxOptions) {
       options.push({
         id: 'skip_' + Math.random(),
