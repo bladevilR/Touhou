@@ -7,8 +7,8 @@ import { GameState, CharacterId, UpgradeOption, Weapon, CharacterConfig } from '
 import { CHARACTERS, WEAPON_DEFS, PASSIVE_DEFS } from './constants';
 
 const App: React.FC = () => {
-  const [gameState, setGameState] = useState<GameState>(GameState.MENU);
-  const [selectedCharacter, setSelectedCharacter] = useState<CharacterConfig>(CHARACTERS[CharacterId.REIMU]);
+  const [gameState, setGameState] = useState<GameState>(GameState.PLAYING);
+  const [selectedCharacter, setSelectedCharacter] = useState<CharacterConfig>(CHARACTERS[CharacterId.MOKOU]);
   const [levelUpOptions, setLevelUpOptions] = useState<UpgradeOption[]>([]);
   const [lastSelectedUpgrade, setLastSelectedUpgrade] = useState<UpgradeOption | null>(null);
   const gameTimeRef = useRef(0); // Track total game time for heal logic
