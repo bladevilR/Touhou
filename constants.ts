@@ -269,39 +269,6 @@ export const WEAPON_DEFS: Record<string, Omit<Weapon, 'level' | 'cooldownTimer'>
 };
 
 // 属性升级系统
-export const STAT_UPGRADES = {
-  'penetration': {
-    id: 'penetration',
-    name: '增加贯穿',
-    description: '所有武器贯穿 +1',
-    icon: '🎯'
-  },
-  'projectile_count': {
-    id: 'projectile_count',
-    name: '增加发射数量',
-    description: '弹幕数量增加',
-    icon: '✨'
-  },
-  'size': {
-    id: 'size',
-    name: '增加大小',
-    description: '武器范围 +15%',
-    icon: '⚡'
-  },
-  'damage': {
-    id: 'damage',
-    name: '增加伤害',
-    description: '所有伤害 +20%',
-    icon: '💥'
-  },
-  'attack_speed': {
-    id: 'attack_speed',
-    name: '增加射速',
-    description: '攻击冷却 -10%',
-    icon: '⚡'
-  }
-};
-
 export const PASSIVE_DEFS: Record<string, {id: string, name: string, description: string, statBonus: Partial<PlayerStats>}> = {
     'p_glove': { id: 'p_glove', name: 'P点回收手套', description: '拾取范围 +20%', statBonus: { pickupRange: 20 } },
     'grimoire': { id: 'grimoire', name: '高速咏唱经卷', description: '冷却 -10%', statBonus: { cooldown: -0.1 } },

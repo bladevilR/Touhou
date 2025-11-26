@@ -140,23 +140,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 player.passives.push(newWeaponToAdd.id);
             }
         } else if (newWeaponToAdd.type === 'passive') {
-            // 属性升级系统
-            if(newWeaponToAdd.id.startsWith('penetration')) {
-                player.weapons.forEach(w => {
-                    // 增加贯穿数（通过修改基础投射物参数实现）
-                });
-                player.passives.push('penetration_boost');
-            } else if(newWeaponToAdd.id.startsWith('projectile_count')) {
-                player.passives.push('projectile_count_boost');
-            } else if(newWeaponToAdd.id.startsWith('size')) {
-                player.stats.area += 0.15;
-            } else if(newWeaponToAdd.id.startsWith('damage')) {
-                player.stats.might += 0.2;
-            } else if(newWeaponToAdd.id.startsWith('attack_speed')) {
-                player.stats.cooldown -= 0.1;
-            }
-            // 原有被动
-            else if(newWeaponToAdd.id === 'p_glove') player.stats.pickupRange += 20;
+            // 被动道具
+            if(newWeaponToAdd.id === 'p_glove') player.stats.pickupRange += 20;
             else if(newWeaponToAdd.id === 'grimoire') player.stats.cooldown -= 0.1;
             else if(newWeaponToAdd.id === 'mushroom') player.stats.area += 0.1;
             else if(newWeaponToAdd.id === 'omamori') player.stats.armor += 1;
@@ -644,7 +629,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const dy = player.dashTarget.y - player.pos.y;
         const dist = Math.hypot(dx, dy);
 
-        if (dist > 5) {
+        // 根据速度动态调整停止阈值，避免卡顿
+        const stopThreshold = dashSpeed * dt * 2;
+        if (dist > stopThreshold) {
             // 继续冲刺
             const moveX = (dx / dist) * dashSpeed * dt;
             const moveY = (dy / dist) * dashSpeed * dt;
@@ -1391,37 +1378,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 if (weaponUpgrades.includes('pillar_duration')) {
                     projs.forEach(p => p.duration *= 2);
                 }
-            }
-
-            // 应用属性升级
-            // 增加贯穿
-            if (player.passives.includes('penetration_boost')) {
-                projs.forEach(p => {
-                    if (!p.isLaser && !p.orbitRadius) {
-                        p.penetration += 1;
-                    }
-                });
-            }
-
-            // 增加弹幕数量（复制弹幕并偏移角度）
-            const projectileCountBoosts = player.passives.filter(p => p === 'projectile_count_boost').length;
-            if (projectileCountBoosts > 0 && projs.length > 0) {
-                const additionalProjs: typeof projs = [];
-                projs.forEach(p => {
-                    if (!p.orbitRadius && !p.isLaser && !p.isTimeStop && !p.isBlackHole) {
-                        for (let i = 0; i < projectileCountBoosts; i++) {
-                            const offset = (i + 1) * 0.15 * (Math.random() > 0.5 ? 1 : -1);
-                            const speed = Math.hypot(p.velocity.x, p.velocity.y);
-                            const angle = Math.atan2(p.velocity.y, p.velocity.x) + offset;
-                            additionalProjs.push({
-                                ...p,
-                                id: Math.random().toString(36).substr(2, 9),
-                                velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed }
-                            });
-                        }
-                    }
-                });
-                projs.push(...additionalProjs);
             }
 
             ents.projectiles.push(...projs);

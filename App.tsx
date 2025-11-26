@@ -4,7 +4,7 @@ import { GameCanvas } from './components/GameCanvas';
 import { MainMenu } from './components/MainMenu';
 import { LevelUpScreen } from './components/LevelUpScreen';
 import { GameState, CharacterId, UpgradeOption, Weapon, CharacterConfig } from './types';
-import { CHARACTERS, WEAPON_DEFS, PASSIVE_DEFS, STAT_UPGRADES, WEAPON_UPGRADE_TREES } from './constants';
+import { CHARACTERS, WEAPON_DEFS, PASSIVE_DEFS, WEAPON_UPGRADE_TREES } from './constants';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
@@ -71,9 +71,6 @@ const App: React.FC = () => {
         return true;
     });
 
-    // 属性升级池（替代通用武器）
-    const statUpgradePool = Object.values(STAT_UPGRADES);
-
     const passivePool = Object.values(PASSIVE_DEFS).filter(p => !currentPassives.includes(p.id)); 
     
     // HEAL Logic: Only if < 100% HP AND Game Time > 3 min (180s)
@@ -102,12 +99,11 @@ const App: React.FC = () => {
                 };
             }
         }
-        // 3. New Item or Stat Upgrade (30%)
+        // 3. New Item (30%)
         else if (rand < 0.91) {
             const pools = [
-                { pool: newWeaponPool, weight: newWeaponPool.length > 0 ? 0.3 : 0 },
-                { pool: statUpgradePool, weight: 0.5 }, // 属性升级占大头
-                { pool: passivePool, weight: passivePool.length > 0 ? 0.2 : 0 }
+                { pool: newWeaponPool, weight: newWeaponPool.length > 0 ? 0.6 : 0 },
+                { pool: passivePool, weight: passivePool.length > 0 ? 0.4 : 0 }
             ];
             const totalWeight = pools.reduce((sum, p) => sum + p.weight, 0);
 
@@ -126,12 +122,6 @@ const App: React.FC = () => {
                                     icon: '⚔️', level: 0, isNew: true, rarity: 'rare'
                                 };
                             }
-                        } else if (poolData.pool === statUpgradePool) {
-                            const s = statUpgradePool[Math.floor(Math.random() * statUpgradePool.length)];
-                            candidate = {
-                                id: s.id + '_' + Math.random(), type: 'passive', name: s.name, description: s.description,
-                                icon: s.icon, level: 0, isNew: true, rarity: 'common'
-                            };
                         } else if (poolData.pool === passivePool && passivePool.length > 0) {
                             const p = passivePool[Math.floor(Math.random() * passivePool.length)];
                             if (!options.find(o => o.id === p.id)) {
