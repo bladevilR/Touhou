@@ -4,7 +4,7 @@ import { GameCanvas } from './components/GameCanvas';
 import { MainMenu } from './components/MainMenu';
 import { LevelUpScreen } from './components/LevelUpScreen';
 import { GameState, CharacterId, UpgradeOption, Weapon, CharacterConfig } from './types';
-import { CHARACTERS, WEAPON_DEFS, PASSIVE_DEFS, WEAPON_UPGRADE_TREES } from './constants';
+import { CHARACTERS, WEAPON_DEFS, WEAPON_UPGRADE_TREES } from './constants';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
@@ -20,12 +20,11 @@ const App: React.FC = () => {
   };
 
   const generateUpgradeOptions = useCallback((currentWeapons: Weapon[], currentPassives: string[], currentHp: number, maxHp: number): UpgradeOption[] => {
-    const options: UpgradeOption[] = [];
     const maxOptions = 3;
 
-    // Check for Weapon Upgrade Tree choices (Tier深化升级)
-    // Trigger at levels 3, 5, 7 for each weapon
-    const weaponsNeedingUpgrade = currentWeapons.filter(w => {
+    // 1. 优先检查：是否有武器需要深化升级树选择
+    // 在等级 3, 5, 7 时触发升级树选择
+    const weaponsNeedingTreeUpgrade = currentWeapons.filter(w => {
       const level = w.level;
       const upgrades = w.upgrades || [];
 
@@ -36,127 +35,98 @@ const App: React.FC = () => {
       return false;
     });
 
-    // If a weapon needs upgrade tree choice, force show those options
-    if (weaponsNeedingUpgrade.length > 0) {
-      const weaponToUpgrade = weaponsNeedingUpgrade[0]; // Take first weapon needing upgrade
+    // 如果有武器需要升级树选择，强制显示该武器的升级树选项
+    if (weaponsNeedingTreeUpgrade.length > 0) {
+      const weaponToUpgrade = weaponsNeedingTreeUpgrade[0];
       const upgradeTree = WEAPON_UPGRADE_TREES[weaponToUpgrade.id];
 
       if (upgradeTree) {
-        const currentTier = (weaponToUpgrade.upgrades || []).length + 1; // 1, 2, or 3
+        const currentTier = (weaponToUpgrade.upgrades || []).length + 1;
         const availableUpgrades = upgradeTree.filter(u => u.tier === currentTier);
 
-        // Return 3 choices for this weapon upgrade
         return availableUpgrades.slice(0, 3).map(upgrade => ({
           id: upgrade.id,
-          type: 'weapon_upgrade' as any, // New type for weapon upgrades
+          type: 'weapon_upgrade' as any,
           name: upgrade.name,
           description: upgrade.description,
           icon: upgrade.icon,
           level: currentTier,
           isNew: true,
           rarity: currentTier === 3 ? 'legendary' : (currentTier === 2 ? 'rare' : 'common'),
-          weaponId: weaponToUpgrade.id // Store which weapon this upgrade is for
+          weaponId: weaponToUpgrade.id
         } as any));
       }
     }
 
-    // Pools
-    const existingWeaponPool = currentWeapons.filter(w => w.level < w.maxLevel);
+    // 2. 否则，显示武器升级或新武器选项
+    const options: UpgradeOption[] = [];
 
-    // Filter New Weapons: Must NOT be exclusive to another character
+    // 可升级的现有武器
+    const upgradableWeapons = currentWeapons.filter(w => w.level < w.maxLevel);
+
+    // 可获取的新武器
     const newWeaponPool = Object.values(WEAPON_DEFS).filter(def => {
-        const hasIt = currentWeapons.some(cw => cw.id === def.id);
-        if (hasIt) return false;
-        if (def.exclusiveTo && def.exclusiveTo !== selectedCharacter.id) return false;
-        return true;
+      const hasIt = currentWeapons.some(cw => cw.id === def.id);
+      if (hasIt) return false;
+      if (def.exclusiveTo && def.exclusiveTo !== selectedCharacter.id) return false;
+      return true;
     });
 
-    const passivePool = Object.values(PASSIVE_DEFS).filter(p => !currentPassives.includes(p.id)); 
-    
-    // HEAL Logic: Only if < 100% HP AND Game Time > 3 min (180s)
-    const canHeal = currentHp < maxHp && gameTimeRef.current > 180;
-
+    // 生成3个选项
     let safetyCounter = 0;
-    while(options.length < maxOptions && safetyCounter < 50) {
-        safetyCounter++;
-        const rand = Math.random();
-        let candidate: UpgradeOption | null = null;
+    while (options.length < maxOptions && safetyCounter < 50) {
+      safetyCounter++;
 
-        // 1. Fantasy Gift (1%)
-        if (rand < 0.01) {
-             candidate = {
-                id: 'fantasy_gift', type: 'heal', name: '幻想乡的馈赠', description: '全额回血 + 生命上限提升',
-                icon: '🎁', level: 1, isNew: true, rarity: 'legendary'
-             };
-        }
-        // 2. Existing Upgrade (60%)
-        else if (rand < 0.61 && existingWeaponPool.length > 0) {
-            const w = existingWeaponPool[Math.floor(Math.random() * existingWeaponPool.length)];
-            if (!options.find(o => o.id === w.id)) {
-                candidate = {
-                    id: w.id, type: 'weapon', name: w.name, description: `升级至等级 ${w.level + 1}.`,
-                    icon: '⚔️', level: w.level, isNew: false, rarity: 'common'
-                };
-            }
-        }
-        // 3. New Item (30%)
-        else if (rand < 0.91) {
-            const pools = [
-                { pool: newWeaponPool, weight: newWeaponPool.length > 0 ? 0.6 : 0 },
-                { pool: passivePool, weight: passivePool.length > 0 ? 0.4 : 0 }
-            ];
-            const totalWeight = pools.reduce((sum, p) => sum + p.weight, 0);
+      // 70% 武器升级，30% 新武器
+      const rand = Math.random();
 
-            if (totalWeight > 0) {
-                const roll = Math.random() * totalWeight;
-                let cumulative = 0;
-
-                for (const poolData of pools) {
-                    cumulative += poolData.weight;
-                    if (roll <= cumulative) {
-                        if (poolData.pool === newWeaponPool && newWeaponPool.length > 0) {
-                            const w = newWeaponPool[Math.floor(Math.random() * newWeaponPool.length)];
-                            if (!options.find(o => o.id === w.id)) {
-                                candidate = {
-                                    id: w.id, type: 'weapon', name: w.name, description: w.description,
-                                    icon: '⚔️', level: 0, isNew: true, rarity: 'rare'
-                                };
-                            }
-                        } else if (poolData.pool === passivePool && passivePool.length > 0) {
-                            const p = passivePool[Math.floor(Math.random() * passivePool.length)];
-                            if (!options.find(o => o.id === p.id)) {
-                                candidate = {
-                                    id: p.id, type: 'passive', name: p.name, description: p.description,
-                                    icon: '📘', level: 0, isNew: true, rarity: 'common'
-                                };
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
+      if (rand < 0.7 && upgradableWeapons.length > 0) {
+        // 武器升级
+        const w = upgradableWeapons[Math.floor(Math.random() * upgradableWeapons.length)];
+        if (!options.find(o => o.id === w.id)) {
+          options.push({
+            id: w.id,
+            type: 'weapon',
+            name: w.name,
+            description: `提升至 LV.${w.level + 1}`,
+            icon: '⚔️',
+            level: w.level,
+            isNew: false,
+            rarity: 'common'
+          });
         }
-        // 4. Heal / Gold (10%)
-        else if (canHeal) {
-             if (!options.find(o => o.type === 'heal')) {
-                candidate = {
-                    id: 'chicken_' + Math.random(), type: 'heal', name: '烤鸡', description: '恢复 50 HP',
-                    icon: '🍗', level: 0, isNew: false, rarity: 'common'
-                };
-             }
+      } else if (newWeaponPool.length > 0) {
+        // 新武器
+        const w = newWeaponPool[Math.floor(Math.random() * newWeaponPool.length)];
+        if (!options.find(o => o.id === w.id)) {
+          options.push({
+            id: w.id,
+            type: 'weapon',
+            name: w.name,
+            description: w.description,
+            icon: '⚔️',
+            level: 0,
+            isNew: true,
+            rarity: 'rare'
+          });
         }
-        
-        // Fallback: If nothing picked (e.g. pools empty, no heal needed), force Gold
-        if (!candidate && options.length < maxOptions && safetyCounter > 10) {
-            candidate = {
-                id: 'gold_' + Math.random(), type: 'heal', name: '金币', description: '获得 100 金币',
-                icon: '💰', level: 0, isNew: false, rarity: 'common'
-            };
-        }
-
-        if (candidate) options.push(candidate);
+      }
     }
-    
+
+    // 如果没有足够选项（所有武器都满级且没有新武器），填充空选项
+    while (options.length < maxOptions) {
+      options.push({
+        id: 'skip_' + Math.random(),
+        type: 'passive' as any,
+        name: '跳过',
+        description: '什么都不做',
+        icon: '⏭️',
+        level: 0,
+        isNew: false,
+        rarity: 'common'
+      });
+    }
+
     return options;
   }, [selectedCharacter]);
 

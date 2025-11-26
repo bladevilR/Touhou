@@ -139,22 +139,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 // Add the upgrade ID to player's passives so we can check it in weapon logic
                 player.passives.push(newWeaponToAdd.id);
             }
-        } else if (newWeaponToAdd.type === 'passive') {
-            // 被动道具
-            if(newWeaponToAdd.id === 'p_glove') player.stats.pickupRange += 20;
-            else if(newWeaponToAdd.id === 'grimoire') player.stats.cooldown -= 0.1;
-            else if(newWeaponToAdd.id === 'mushroom') player.stats.area += 0.1;
-            else if(newWeaponToAdd.id === 'omamori') player.stats.armor += 1;
-            else if(newWeaponToAdd.id === 'geta') player.stats.speed += 0.4;
-
-            player.passives.push(newWeaponToAdd.id);
-        } else if (newWeaponToAdd.type === 'heal') {
-            if(newWeaponToAdd.id === 'fantasy_gift') {
-                player.stats.maxHp += 50;
-                player.stats.hp = player.stats.maxHp;
-            } else if(newWeaponToAdd.name === '烤鸡') {
-                player.stats.hp = Math.min(player.stats.hp + 50, player.stats.maxHp);
-            }
         }
     }
   }, [newWeaponToAdd, gameState]);

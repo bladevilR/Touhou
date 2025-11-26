@@ -268,16 +268,6 @@ export const WEAPON_DEFS: Record<string, Omit<Weapon, 'level' | 'cooldownTimer'>
 
 };
 
-// 属性升级系统
-export const PASSIVE_DEFS: Record<string, {id: string, name: string, description: string, statBonus: Partial<PlayerStats>}> = {
-    'p_glove': { id: 'p_glove', name: 'P点回收手套', description: '拾取范围 +20%', statBonus: { pickupRange: 20 } },
-    'grimoire': { id: 'grimoire', name: '高速咏唱经卷', description: '冷却 -10%', statBonus: { cooldown: -0.1 } },
-    'mushroom': { id: 'mushroom', name: '巨大化蘑菇', description: '范围 +10%', statBonus: { area: 0.1 } },
-    'omamori': { id: 'omamori', name: '硬邦邦的御守', description: '护甲 +1', statBonus: { armor: 1 } },
-    'geta': { id: 'geta', name: '天狗的高木屐', description: '速度 +10%', statBonus: { speed: 0.4 } },
-    'money_box': { id: 'money_box', name: '贪婪的钱箱', description: '幸运 +20%', statBonus: { luck: 0.2 } },
-};
-
 export const WAVES = [
     { time: 0, interval: 60, enemyStats: { hp: 10, damage: 5, speed: 1.5, type: 'slime', exp: 3, color: '#a8e6cf' } },
     { time: 0, interval: 180, enemyStats: { hp: 20, damage: 6, speed: 2.0, type: 'elf', exp: 8, color: '#87ceeb' } }, // Elf from start (every 3 seconds)
