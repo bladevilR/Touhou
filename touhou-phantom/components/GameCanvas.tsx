@@ -26,6 +26,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
   const initializedRef = useRef(false);
+  const [isInitialized, setIsInitialized] = useState(false); // 用于触发重新渲染
 
   // Sprite containers
   const backgroundContainerRef = useRef<PIXI.Container | null>(null);
@@ -399,6 +400,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         texturesRef.current.particle = app.renderer.generateTexture(particleGraphics);
 
         initializedRef.current = true;
+        setIsInitialized(true); // 触发重新渲染，启动游戏循环
       } catch (error) {
         console.error('Error loading textures:', error);
       }
@@ -407,6 +409,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     return () => {
       mounted = false;
       initializedRef.current = false;
+      setIsInitialized(false);
 
       // 停止 ticker
       if (app?.ticker) {
@@ -1487,7 +1490,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         cancelAnimationFrame(animationFrameId);
       }
     };
-  }, [update, render]);
+  }, [update, render, isInitialized]);
 
   return (
     <div className="relative w-full h-screen bg-gray-900 flex items-center justify-center">
