@@ -108,7 +108,13 @@ export interface Weapon {
   type: 'projectile' | 'aura' | 'orbital' | 'laser' | 'dash' | 'special';
   onFire: (source: Vector2, target: Vector2 | null, stats: PlayerStats, time: number) => Projectile[];
   // 技能升级选项
-  upgrades?: string[]; // 已选择的升级ID列表
+  upgrades?: string[]; // 已选择的升级ID列表（3/5/7级的特殊升级）
+  // 通用升级统计
+  damageBonus?: number; // 伤害加成倍数
+  cooldownBonus?: number; // 冷却减少倍数
+  areaBonus?: number; // 范围加成倍数
+  countBonus?: number; // 数量加成
+  speedBonus?: number; // 速度加成倍数
 }
 
 // 技能升级选项
@@ -158,12 +164,13 @@ export interface Projectile extends Entity {
 
 export interface UpgradeOption {
   id: string;
-  type: 'weapon' | 'passive' | 'heal' | 'weapon_upgrade';
+  type: 'weapon' | 'passive' | 'heal' | 'weapon_upgrade' | 'weapon_stat';
   name: string;
   description: string;
   icon: string;
   level: number;
   isNew: boolean;
   rarity: 'common' | 'rare' | 'legendary';
-  weaponId?: string; // For weapon_upgrade type, which weapon this upgrade belongs to
+  weaponId?: string; // For weapon_upgrade/weapon_stat type, which weapon this upgrade belongs to
+  statType?: 'damage' | 'cooldown' | 'area' | 'count' | 'speed'; // For weapon_stat type
 }

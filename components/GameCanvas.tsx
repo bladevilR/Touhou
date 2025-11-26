@@ -123,14 +123,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             const existing = player.weapons.find(w => w.id === newWeaponToAdd.id);
             if (existing) {
                 existing.level++;
-                existing.baseDamage *= 1.2;
-                existing.cooldownMax *= 0.95;
             } else {
                 const def = WEAPON_DEFS[newWeaponToAdd.id];
                 if (def) player.weapons.push({ ...def, level: 1, cooldownTimer: 0, upgrades: [] });
             }
+        } else if (newWeaponToAdd.type === 'weapon_stat') {
+            // Handle weapon stat upgrades (damage/cooldown/area/count/speed)
+            const weaponToUpgrade = player.weapons.find(w => w.id === newWeaponToAdd.weaponId);
+            if (weaponToUpgrade) {
+                weaponToUpgrade.level++;
+
+                // Apply stat bonus
+                if (newWeaponToAdd.statType === 'damage') {
+                    weaponToUpgrade.damageBonus = (weaponToUpgrade.damageBonus || 1) * 1.15;
+                } else if (newWeaponToAdd.statType === 'cooldown') {
+                    weaponToUpgrade.cooldownBonus = (weaponToUpgrade.cooldownBonus || 1) * 0.9;
+                } else if (newWeaponToAdd.statType === 'area') {
+                    weaponToUpgrade.areaBonus = (weaponToUpgrade.areaBonus || 1) * 1.12;
+                } else if (newWeaponToAdd.statType === 'count') {
+                    weaponToUpgrade.countBonus = (weaponToUpgrade.countBonus || 0) + 1;
+                } else if (newWeaponToAdd.statType === 'speed') {
+                    weaponToUpgrade.speedBonus = (weaponToUpgrade.speedBonus || 1) * 1.15;
+                }
+            }
         } else if (newWeaponToAdd.type === 'weapon_upgrade') {
-            // Handle weapon upgrade tree choices
+            // Handle weapon upgrade tree choices (3/5/7级的特殊升级)
             const weaponToUpgrade = player.weapons.find(w => w.id === newWeaponToAdd.weaponId);
             if (weaponToUpgrade) {
                 if (!weaponToUpgrade.upgrades) weaponToUpgrade.upgrades = [];
@@ -588,8 +605,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
     }
 
-    // Regen
-    if (Math.floor(timeRef.current) % 60 === 0 && player.stats.hp < player.stats.maxHp && player.stats.hp > 0) {
+    // Regen (only if recovery is positive)
+    if (Math.floor(timeRef.current) % 60 === 0 && player.stats.hp < player.stats.maxHp && player.stats.hp > 0 && player.stats.recovery > 0) {
         player.stats.hp += player.stats.recovery;
     }
     if (player.invulnTimer > 0) player.invulnTimer -= dt;
