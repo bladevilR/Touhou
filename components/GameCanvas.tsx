@@ -353,7 +353,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Load textures
         // Load sprite sheet
-        const spriteTexture = await PIXI.Assets.load('/sprite.png');
+        const spriteTexture = await PIXI.Assets.load(`${import.meta.env.BASE_URL}sprite.png`);
         if (!mounted) return;
 
         const frameWidth = spriteTexture.width / spriteFrameCount;
@@ -375,7 +375,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           const img = new Image();
-          img.src = '/sprite.png';
+          img.src = `${import.meta.env.BASE_URL}sprite.png`;
           await new Promise((resolve) => { img.onload = resolve; });
           ctx.drawImage(img, 0, 0, frameWidth, frameHeight, 0, 0, frameWidth, frameHeight);
           const imageData = ctx.getImageData(0, 0, frameWidth, frameHeight);
@@ -401,15 +401,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Load other textures
-        texturesRef.current.stand = await PIXI.Assets.load('/stand.png');
+        texturesRef.current.stand = await PIXI.Assets.load(`${import.meta.env.BASE_URL}stand.png`);
         if (!mounted) return;
-        texturesRef.current.maoyu = await PIXI.Assets.load('/maoyu.png');
+        texturesRef.current.maoyu = await PIXI.Assets.load(`${import.meta.env.BASE_URL}maoyu.png`);
         if (!mounted) return;
-        texturesRef.current.elf = await PIXI.Assets.load('/elf.png');
+        texturesRef.current.elf = await PIXI.Assets.load(`${import.meta.env.BASE_URL}elf.png`);
         if (!mounted) return;
-        texturesRef.current.grass2 = await PIXI.Assets.load('/grass2.png');
+        texturesRef.current.grass2 = await PIXI.Assets.load(`${import.meta.env.BASE_URL}grass2.png`);
         if (!mounted) return;
-        texturesRef.current.grass3 = await PIXI.Assets.load('/grass3.png');
+        texturesRef.current.grass3 = await PIXI.Assets.load(`${import.meta.env.BASE_URL}grass3.png`);
         if (!mounted) return;
 
         // Create particle texture (simple circle)
