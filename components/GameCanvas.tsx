@@ -58,19 +58,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Texture refs
   const texturesRef = useRef<{
     sprite?: PIXI.Texture[];
+    spriteUp?: PIXI.Texture[];
+    spriteDown?: PIXI.Texture[];
     stand?: PIXI.Texture;
     maoyu?: PIXI.Texture;
     elf?: PIXI.Texture;
     grass2?: PIXI.Texture;
     grass3?: PIXI.Texture;
     particle?: PIXI.Texture;
+    mokuokick?: PIXI.Texture;
+    molisha?: PIXI.Texture;
+    yaomeng?: PIXI.Texture;
+    cirno?: PIXI.Texture;
+    huiye?: PIXI.Texture;
   }>({});
 
   const spriteBoundsRef = useRef({ width: 0, height: 0, offsetX: 0, offsetY: 0 });
   const standBoundsRef = useRef({ width: 0, height: 0, offsetX: 0, offsetY: 0 });
 
+  // Store bounds for all textures
+  const textureBoundsRef = useRef<Record<string, { width: number; height: number; offsetX: number; offsetY: number }>>({});
+
   // Movement state
   const isMovingRef = useRef(false);
+  const movementDirectionRef = useRef({ dx: 0, dy: 0 }); // 记录移动方向
 
   // Logic Refs
   const playerRef = useRef({
@@ -105,6 +116,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const inputRef = useRef<{ keys: Set<string>; mouse: Vector2 }>({ keys: new Set(), mouse: { x: 0, y: 0 } });
   const timeRef = useRef(0);
   const animationFrameRef = useRef(0);
+  const animationTimeRef = useRef(0); // Track animation time for consistent speed
   const spriteFrameCount = 8;
   const [hudStats, setHudStats] = useState({ hp: 100, maxHp: 100, exp: 0, nextExp: 10, level: 1, time: 0 });
   const [isInitialized, setIsInitialized] = useState(false);
@@ -291,6 +303,62 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     screenShakeRef.current = { x: 0, y: 0, intensity, duration };
   };
 
+  // Helper: Calculate non-transparent bounds for a texture
+  const calculateTextureBounds = async (imageUrl: string, frameWidth: number, frameHeight: number): Promise<{ width: number; height: number; offsetX: number; offsetY: number }> => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = frameWidth;
+      canvas.height = frameHeight;
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx) {
+        resolve({ width: frameWidth, height: frameHeight, offsetX: 0, offsetY: 0 });
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, frameWidth, frameHeight, 0, 0, frameWidth, frameHeight);
+        const imageData = ctx.getImageData(0, 0, frameWidth, frameHeight);
+        const data = imageData.data;
+
+        let minX = frameWidth, maxX = 0, minY = frameHeight, maxY = 0;
+        let hasPixels = false;
+
+        for (let y = 0; y < frameHeight; y++) {
+          for (let x = 0; x < frameWidth; x++) {
+            const alpha = data[(y * frameWidth + x) * 4 + 3];
+            if (alpha > 50) {
+              hasPixels = true;
+              minX = Math.min(minX, x);
+              maxX = Math.max(maxX, x);
+              minY = Math.min(minY, y);
+              maxY = Math.max(maxY, y);
+            }
+          }
+        }
+
+        if (!hasPixels) {
+          resolve({ width: frameWidth, height: frameHeight, offsetX: 0, offsetY: 0 });
+          return;
+        }
+
+        resolve({
+          width: maxX - minX,
+          height: maxY - minY,
+          offsetX: minX - frameWidth / 2,
+          offsetY: minY - frameHeight / 2
+        });
+      };
+
+      img.onerror = () => {
+        resolve({ width: frameWidth, height: frameHeight, offsetX: 0, offsetY: 0 });
+      };
+
+      img.src = imageUrl;
+    });
+  };
+
   // Initialize PixiJS
   useEffect(() => {
     if (!containerRef.current) return;
@@ -338,7 +406,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         appRef.current = app;
 
         // Load textures
-        // Load sprite sheet
+        // Load sprite sheet (horizontal run)
         const spriteTexture = await PIXI.Assets.load(`${import.meta.env.BASE_URL}sprite.png`);
         if (!mounted) return;
 
@@ -352,6 +420,74 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             frame: new PIXI.Rectangle(i * frameWidth, 0, frameWidth, frameHeight)
           });
           texturesRef.current.sprite.push(frame);
+        }
+
+        // Load sprite sheet (vertical up run - 4 frames)
+        const spriteUpTexture = await PIXI.Assets.load(`${import.meta.env.BASE_URL}up.png`);
+        if (!mounted) return;
+
+        const spriteUpFrameCount = 4;
+        const frameUpWidth = spriteUpTexture.width / spriteUpFrameCount;
+        const frameUpHeight = spriteUpTexture.height;
+
+        texturesRef.current.spriteUp = [];
+        for (let i = 0; i < spriteUpFrameCount; i++) {
+          const frame = new PIXI.Texture({
+            source: spriteUpTexture.source,
+            frame: new PIXI.Rectangle(i * frameUpWidth, 0, frameUpWidth, frameUpHeight)
+          });
+          texturesRef.current.spriteUp.push(frame);
+        }
+
+        // Load sprite sheet (vertical down run - 17 frames, arranged vertically)
+        const spriteDownTexture = await PIXI.Assets.load(`${import.meta.env.BASE_URL}down.png`);
+        if (!mounted) return;
+
+        console.log('down.png dimensions:', spriteDownTexture.width, 'x', spriteDownTexture.height);
+
+        // Check WebGL max texture size
+        const gl = app.renderer.gl;
+        const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+        console.log('WebGL MAX_TEXTURE_SIZE:', maxTextureSize);
+
+        const spriteDownFrameCount = 17;
+
+        // Check if this is a vertical layout (height > width) or horizontal layout
+        const isVerticalLayout = spriteDownTexture.height > spriteDownTexture.width;
+
+        if (isVerticalLayout) {
+          // Vertical layout: frames are stacked top to bottom
+          const frameDownWidth = spriteDownTexture.width;
+          const frameDownHeight = spriteDownTexture.height / spriteDownFrameCount;
+          console.log('Vertical layout - Calculated frame size:', frameDownWidth, 'x', frameDownHeight);
+
+          texturesRef.current.spriteDown = [];
+          for (let i = 0; i < spriteDownFrameCount; i++) {
+            const frame = new PIXI.Texture({
+              source: spriteDownTexture.source,
+              frame: new PIXI.Rectangle(0, i * frameDownHeight, frameDownWidth, frameDownHeight)
+            });
+            texturesRef.current.spriteDown.push(frame);
+          }
+        } else {
+          // Horizontal layout: frames are side by side
+          const frameDownWidth = spriteDownTexture.width / spriteDownFrameCount;
+          const frameDownHeight = spriteDownTexture.height;
+          console.log('Horizontal layout - Calculated frame size:', frameDownWidth, 'x', frameDownHeight);
+
+          if (spriteDownTexture.width > maxTextureSize) {
+            console.error(`down.png width (${spriteDownTexture.width}) exceeds MAX_TEXTURE_SIZE (${maxTextureSize})`);
+            console.error('Please convert to vertical layout or reduce image size!');
+          } else {
+            texturesRef.current.spriteDown = [];
+            for (let i = 0; i < spriteDownFrameCount; i++) {
+              const frame = new PIXI.Texture({
+                source: spriteDownTexture.source,
+                frame: new PIXI.Rectangle(i * frameDownWidth, 0, frameDownWidth, frameDownHeight)
+              });
+              texturesRef.current.spriteDown.push(frame);
+            }
+          }
         }
 
         // Calculate sprite bounds for collision
@@ -393,10 +529,40 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (!mounted) return;
         texturesRef.current.elf = await PIXI.Assets.load(`${import.meta.env.BASE_URL}elf.png`);
         if (!mounted) return;
-        texturesRef.current.grass2 = await PIXI.Assets.load(`${import.meta.env.BASE_URL}grass2.png`);
+        texturesRef.current.grass2 = await PIXI.Assets.load(`${import.meta.env.BASE_URL}grassnew.png`);
         if (!mounted) return;
-        texturesRef.current.grass3 = await PIXI.Assets.load(`${import.meta.env.BASE_URL}grass3.png`);
+        texturesRef.current.grass3 = await PIXI.Assets.load(`${import.meta.env.BASE_URL}grassnew2.png`);
         if (!mounted) return;
+
+        // Load new character and enemy textures
+        texturesRef.current.mokuokick = await PIXI.Assets.load(`${import.meta.env.BASE_URL}mokuokick.png`);
+        if (!mounted) return;
+        texturesRef.current.molisha = await PIXI.Assets.load(`${import.meta.env.BASE_URL}molisha.png`);
+        if (!mounted) return;
+        texturesRef.current.yaomeng = await PIXI.Assets.load(`${import.meta.env.BASE_URL}yaomeng.png`);
+        if (!mounted) return;
+        texturesRef.current.cirno = await PIXI.Assets.load(`${import.meta.env.BASE_URL}91.png`);
+        if (!mounted) return;
+        texturesRef.current.huiye = await PIXI.Assets.load(`${import.meta.env.BASE_URL}huiye2.png`);
+        if (!mounted) return;
+
+        // Calculate bounds for all character and enemy textures
+        console.log('Calculating texture bounds...');
+        const baseUrl = import.meta.env.BASE_URL;
+
+        // Character textures
+        textureBoundsRef.current.stand = await calculateTextureBounds(`${baseUrl}stand.png`, texturesRef.current.stand!.width, texturesRef.current.stand!.height);
+        textureBoundsRef.current.mokuokick = await calculateTextureBounds(`${baseUrl}mokuokick.png`, texturesRef.current.mokuokick!.width, texturesRef.current.mokuokick!.height);
+        textureBoundsRef.current.molisha = await calculateTextureBounds(`${baseUrl}molisha.png`, texturesRef.current.molisha!.width, texturesRef.current.molisha!.height);
+
+        // Enemy textures
+        textureBoundsRef.current.maoyu = await calculateTextureBounds(`${baseUrl}maoyu.png`, texturesRef.current.maoyu!.width, texturesRef.current.maoyu!.height);
+        textureBoundsRef.current.elf = await calculateTextureBounds(`${baseUrl}elf.png`, texturesRef.current.elf!.width, texturesRef.current.elf!.height);
+        textureBoundsRef.current.cirno = await calculateTextureBounds(`${baseUrl}91.png`, texturesRef.current.cirno!.width, texturesRef.current.cirno!.height);
+        textureBoundsRef.current.yaomeng = await calculateTextureBounds(`${baseUrl}yaomeng.png`, texturesRef.current.yaomeng!.width, texturesRef.current.yaomeng!.height);
+        textureBoundsRef.current.huiye = await calculateTextureBounds(`${baseUrl}huiye2.png`, texturesRef.current.huiye!.width, texturesRef.current.huiye!.height);
+
+        console.log('Texture bounds calculated:', textureBoundsRef.current);
 
         // Create particle texture (simple circle)
         const particleGraphics = new PIXI.Graphics();
@@ -565,6 +731,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             player.pos.x = Math.max(10, Math.min(MAP_WIDTH - 10, player.pos.x));
             player.pos.y = Math.max(10, Math.min(MAP_HEIGHT - 10, player.pos.y));
             isMovingRef.current = true;
+            // 记录移动方向（归一化后的）
+            movementDirectionRef.current = { dx: dx/len, dy: dy/len };
 
             // Add footprint
             if (Math.floor(timeRef.current) % 5 === 0) {
@@ -618,8 +786,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Dash 技能处理
     if (player.isDashing && player.activeSkill) {
+        // 飞踢期间无敌
+        player.invulnTimer = Math.max(player.invulnTimer, 5);
+
         // kick_speed: 飞行速度 +200%，伤害 +100%
-        let dashSpeed = 20;
+        let dashSpeed = 8; // 降低基础速度从 12 到 8
         let damageMultiplier = 1.0;
         if (player.passives.includes('kick_speed')) {
             dashSpeed *= 3; // +200%
@@ -750,7 +921,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             maxHp: BOSS_CONFIGS.cirno.hp,
             damage: BOSS_CONFIGS.cirno.damage,
             speed: BOSS_CONFIGS.cirno.speed,
-            type: 'boss',
+            type: 'boss1',
             expValue: BOSS_CONFIGS.cirno.expValue,
             frozen: 0,
             isBoss: true,
@@ -776,7 +947,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             maxHp: BOSS_CONFIGS.youmu.hp,
             damage: BOSS_CONFIGS.youmu.damage,
             speed: BOSS_CONFIGS.youmu.speed,
-            type: 'boss',
+            type: 'boss2',
             expValue: BOSS_CONFIGS.youmu.expValue,
             frozen: 0,
             isBoss: true,
@@ -802,7 +973,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             maxHp: BOSS_CONFIGS.kaguya.hp,
             damage: BOSS_CONFIGS.kaguya.damage,
             speed: BOSS_CONFIGS.kaguya.speed,
-            type: 'boss',
+            type: 'boss3',
             expValue: BOSS_CONFIGS.kaguya.expValue,
             frozen: 0,
             isBoss: true,
@@ -2037,18 +2208,65 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             e.position.y += e.velocity.y * dt;
         }
 
-        // Hit Player
-        let playerRadius = 18; // Slightly bigger than 15
+        // Hit Player - calculate based on current sprite
+        let playerRadius = 18; // Default fallback
+        const targetHeight = 120;
+
         if (character.id === 'mokou') {
-            const targetHeight = 120; // Slightly bigger than 100
             const isMoving = isMovingRef.current;
-            if (isMoving && texturesRef.current.sprite) {
-                const scaleMove = targetHeight / (texturesRef.current.sprite[0].height);
-                playerRadius = Math.max(spriteBoundsRef.current.width, spriteBoundsRef.current.height) * scaleMove / 2;
+            const moveDir = movementDirectionRef.current;
+            const isMovingUp = isMoving && moveDir.dy < -0.5;
+            const isMovingDown = isMoving && moveDir.dy > 0.5;
+
+            let bounds;
+            if (player.isDashing && textureBoundsRef.current.mokuokick) {
+                bounds = textureBoundsRef.current.mokuokick;
+                const scale = targetHeight / texturesRef.current.mokuokick!.height;
+                playerRadius = Math.max(bounds.width, bounds.height) * scale / 2;
+            } else if (isMoving && texturesRef.current.sprite) {
+                const scale = targetHeight / texturesRef.current.sprite[0].height;
+                playerRadius = Math.max(spriteBoundsRef.current.width, spriteBoundsRef.current.height) * scale / 2;
+            } else if (textureBoundsRef.current.stand) {
+                bounds = textureBoundsRef.current.stand;
+                const scale = targetHeight / texturesRef.current.stand!.height;
+                playerRadius = Math.max(bounds.width, bounds.height) * scale / 2;
             }
+        } else if (character.id === 'marisa' && textureBoundsRef.current.molisha) {
+            const bounds = textureBoundsRef.current.molisha;
+            const scale = targetHeight / texturesRef.current.molisha!.height;
+            playerRadius = Math.max(bounds.width, bounds.height) * scale / 2;
         }
 
-        if (dist < (e.radius + playerRadius) && player.invulnTimer <= 0) {
+        // Calculate enemy radius based on texture
+        let enemyRadius = e.radius; // Default fallback
+        if (e.type === 'slime' && textureBoundsRef.current.maoyu) {
+            const bounds = textureBoundsRef.current.maoyu;
+            const targetSize = 80;
+            const scale = targetSize / Math.max(texturesRef.current.maoyu!.width, texturesRef.current.maoyu!.height);
+            enemyRadius = Math.max(bounds.width, bounds.height) * scale / 2;
+        } else if (e.type === 'elf' && textureBoundsRef.current.elf) {
+            const bounds = textureBoundsRef.current.elf;
+            const targetSize = 75;
+            const scale = targetSize / Math.max(texturesRef.current.elf!.width, texturesRef.current.elf!.height);
+            enemyRadius = Math.max(bounds.width, bounds.height) * scale / 2;
+        } else if (e.type === 'boss1' && textureBoundsRef.current.cirno) {
+            const bounds = textureBoundsRef.current.cirno;
+            const targetSize = 100;
+            const scale = targetSize / Math.max(texturesRef.current.cirno!.width, texturesRef.current.cirno!.height);
+            enemyRadius = Math.max(bounds.width, bounds.height) * scale / 2;
+        } else if (e.type === 'boss2' && textureBoundsRef.current.yaomeng) {
+            const bounds = textureBoundsRef.current.yaomeng;
+            const targetSize = 110;
+            const scale = targetSize / Math.max(texturesRef.current.yaomeng!.width, texturesRef.current.yaomeng!.height);
+            enemyRadius = Math.max(bounds.width, bounds.height) * scale / 2;
+        } else if (e.type === 'boss3' && textureBoundsRef.current.huiye) {
+            const bounds = textureBoundsRef.current.huiye;
+            const targetSize = 120;
+            const scale = targetSize / Math.max(texturesRef.current.huiye!.width, texturesRef.current.huiye!.height);
+            enemyRadius = Math.max(bounds.width, bounds.height) * scale / 2;
+        }
+
+        if (dist < (enemyRadius + playerRadius) && player.invulnTimer <= 0) {
             const dmg = Math.max(1, e.damage - player.stats.armor);
             player.stats.hp -= dmg;
             player.invulnTimer = 30;
@@ -2124,9 +2342,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         });
     }
 
-    // Update sprite animation
-    if (isMovingRef.current && Math.floor(timeRef.current) % 8 === 0) {
-        animationFrameRef.current = (animationFrameRef.current + 1) % spriteFrameCount;
+    // Update sprite animation - unified speed across all directions
+    if (isMovingRef.current) {
+        // Animation speed: complete full cycle every 60 frames (1 second at 60fps)
+        // This gives consistent visual speed regardless of frame count
+        animationTimeRef.current += dt;
+        const animationCycleDuration = 60; // frames for one complete animation cycle
+        const progress = (animationTimeRef.current % animationCycleDuration) / animationCycleDuration;
+
+        // Update frame index based on direction
+        const moveDir = movementDirectionRef.current;
+        const isMovingUp = moveDir.dy < -0.5;
+        const isMovingDown = moveDir.dy > 0.5;
+
+        if (isMovingUp) {
+            // 4 frames for up
+            animationFrameRef.current = Math.floor(progress * 4) % 4;
+        } else if (isMovingDown) {
+            // 17 frames for down
+            animationFrameRef.current = Math.floor(progress * 17) % 17;
+        } else {
+            // 8 frames for horizontal
+            animationFrameRef.current = Math.floor(progress * 8) % 8;
+        }
+    } else {
+        animationTimeRef.current = 0;
+        animationFrameRef.current = 0;
     }
 
     // Update projectile trails - 限制最大轨迹数量
@@ -2322,6 +2563,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         entityContainerRef.current.addChild(sprite);
       } else if (e.type === 'elf' && texturesRef.current.elf) {
+        // 普通精灵敌人，使用原来的 elf 纹理
         const sprite = new PIXI.Sprite(texturesRef.current.elf);
         sprite.anchor.set(0.5);
 
@@ -2338,6 +2580,87 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           sprite.alpha = 0.7;
           sprite.tint = 0x8888ff;
         }
+
+        entityContainerRef.current.addChild(sprite);
+      } else if (e.type === 'boss1' && texturesRef.current.cirno) {
+        // Boss 1: 琪露诺 (Cirno)，右侧站姿
+        const sprite = new PIXI.Sprite(texturesRef.current.cirno);
+        sprite.anchor.set(0.5);
+
+        const targetSize = 100;
+        const scale = targetSize / Math.max(texturesRef.current.cirno.width, texturesRef.current.cirno.height);
+
+        sprite.x = e.position.x;
+        sprite.y = e.position.y;
+        // 右侧站姿，向左移动时镜像
+        sprite.scale.x = (e.velocity.x < -0.1 ? 1 : -1) * scale;
+        sprite.scale.y = scale;
+
+        if (e.frozen > 0) {
+          sprite.alpha = 0.7;
+          sprite.tint = 0x8888ff;
+        }
+
+        // Boss glow effect
+        const glowIntensity = 0.3 + Math.sin(timeRef.current * 0.1) * 0.2;
+        const glow = new PIXI.Graphics();
+        glow.circle(e.position.x, e.position.y, targetSize * 0.6);
+        glow.fill({ color: e.color, alpha: glowIntensity });
+        entityContainerRef.current.addChild(glow);
+
+        entityContainerRef.current.addChild(sprite);
+      } else if (e.type === 'boss2' && texturesRef.current.yaomeng) {
+        // Boss 2: 妖梦 (Youmu)，右侧站姿
+        const sprite = new PIXI.Sprite(texturesRef.current.yaomeng);
+        sprite.anchor.set(0.5);
+
+        const targetSize = 110;
+        const scale = targetSize / Math.max(texturesRef.current.yaomeng.width, texturesRef.current.yaomeng.height);
+
+        sprite.x = e.position.x;
+        sprite.y = e.position.y;
+        // 右侧站姿，向左移动时镜像
+        sprite.scale.x = (e.velocity.x < -0.1 ? 1 : -1) * scale;
+        sprite.scale.y = scale;
+
+        if (e.frozen > 0) {
+          sprite.alpha = 0.7;
+          sprite.tint = 0x8888ff;
+        }
+
+        // Boss glow effect
+        const glowIntensity = 0.3 + Math.sin(timeRef.current * 0.1) * 0.2;
+        const glow = new PIXI.Graphics();
+        glow.circle(e.position.x, e.position.y, targetSize * 0.6);
+        glow.fill({ color: e.color, alpha: glowIntensity });
+        entityContainerRef.current.addChild(glow);
+
+        entityContainerRef.current.addChild(sprite);
+      } else if (e.type === 'boss3' && texturesRef.current.huiye) {
+        // Boss 3: 辉夜 (Kaguya)，右侧站姿
+        const sprite = new PIXI.Sprite(texturesRef.current.huiye);
+        sprite.anchor.set(0.5);
+
+        const targetSize = 120;
+        const scale = targetSize / Math.max(texturesRef.current.huiye.width, texturesRef.current.huiye.height);
+
+        sprite.x = e.position.x;
+        sprite.y = e.position.y;
+        // 右侧站姿，向左移动时镜像
+        sprite.scale.x = (e.velocity.x < -0.1 ? 1 : -1) * scale;
+        sprite.scale.y = scale;
+
+        if (e.frozen > 0) {
+          sprite.alpha = 0.7;
+          sprite.tint = 0x8888ff;
+        }
+
+        // Boss glow effect
+        const glowIntensity = 0.3 + Math.sin(timeRef.current * 0.1) * 0.2;
+        const glow = new PIXI.Graphics();
+        glow.circle(e.position.x, e.position.y, targetSize * 0.6);
+        glow.fill({ color: e.color, alpha: glowIntensity });
+        entityContainerRef.current.addChild(glow);
 
         entityContainerRef.current.addChild(sprite);
       } else {
@@ -2391,32 +2714,76 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     });
 
     // Player
-    if (player.invulnTimer <= 0 || (player.invulnTimer % 10 < 5)) {
+    // 飞踢时始终显示,否则按无敌闪烁规则
+    if (player.isDashing || player.invulnTimer <= 0 || (player.invulnTimer % 10 < 5)) {
       if (character.id === 'mokou') {
         const isMoving = isMovingRef.current;
-        const texture = isMoving && texturesRef.current.sprite
-          ? texturesRef.current.sprite[(spriteFrameCount - 1) - animationFrameRef.current]
-          : texturesRef.current.stand;
+        const moveDir = movementDirectionRef.current;
+
+        // 判断移动方向（dy < -0.5 向上，dy > 0.5 向下）
+        const isMovingUp = isMoving && moveDir.dy < -0.5;
+        const isMovingDown = isMoving && moveDir.dy > 0.5;
+
+        let texture;
+        let dashDirection = 1; // 飞踢方向
+        // 使用蹴飞纹理仅在执行Dash技能时
+        if (player.isDashing && texturesRef.current.mokuokick) {
+          texture = texturesRef.current.mokuokick;
+          // 计算飞踢方向 (朝向目标)
+          const dx = player.dashTarget.x - player.pos.x;
+          dashDirection = dx < 0 ? 1 : -1; // 图片往左,目标在左边不镜像,在右边镜像
+        } else if (isMoving) {
+          // 根据移动方向选择雪碧图 (帧索引已在update中计算好)
+          if (isMovingUp && texturesRef.current.spriteUp) {
+            // 向上移动时使用 up 雪碧图 (4 帧)
+            texture = texturesRef.current.spriteUp[3 - animationFrameRef.current];
+          } else if (isMovingDown && texturesRef.current.spriteDown) {
+            // 向下移动时使用 down 雪碧图 (17 帧)
+            texture = texturesRef.current.spriteDown[16 - animationFrameRef.current];
+          } else if (texturesRef.current.sprite) {
+            // 水平移动时使用普通雪碧图 (8 帧)
+            texture = texturesRef.current.sprite[(spriteFrameCount - 1) - animationFrameRef.current];
+          }
+        } else {
+          texture = texturesRef.current.stand;
+        }
 
         if (texture) {
           const sprite = new PIXI.Sprite(texture);
           sprite.anchor.set(0.5);
-          const targetHeight = 120; // Slightly bigger than 100
+          const targetHeight = 120;
           const scale = targetHeight / texture.height;
           sprite.x = player.pos.x;
           sprite.y = player.pos.y;
-          sprite.scale.x = (player.facing.x < 0 ? -1 : 1) * scale;
+          // mokuokick 图片是往左的,根据飞行目标方向镜像
+          if (player.isDashing && texturesRef.current.mokuokick === texture) {
+            sprite.scale.x = dashDirection * scale; // 朝向飞行目标
+          } else {
+            sprite.scale.x = (player.facing.x < 0 ? -1 : 1) * scale;
+          }
           sprite.scale.y = scale;
           entityContainerRef.current.addChild(sprite);
         } else {
           const graphics = new PIXI.Graphics();
-          graphics.circle(player.pos.x, player.pos.y, 18); // Slightly bigger than 15
+          graphics.circle(player.pos.x, player.pos.y, 18);
           graphics.fill(character.color);
           entityContainerRef.current.addChild(graphics);
         }
+      } else if (character.id === 'marisa' && texturesRef.current.molisha) {
+        // 魔理沙使用 molisha 纹理（左侧站姿）
+        const sprite = new PIXI.Sprite(texturesRef.current.molisha);
+        sprite.anchor.set(0.5);
+        const targetHeight = 120;
+        const scale = targetHeight / texturesRef.current.molisha.height;
+        sprite.x = player.pos.x;
+        sprite.y = player.pos.y;
+        // molisha 是左侧站姿，向右时镜像
+        sprite.scale.x = (player.facing.x < 0 ? 1 : -1) * scale;
+        sprite.scale.y = scale;
+        entityContainerRef.current.addChild(sprite);
       } else {
         const graphics = new PIXI.Graphics();
-        graphics.circle(player.pos.x, player.pos.y, 18); // Slightly bigger than 15
+        graphics.circle(player.pos.x, player.pos.y, 18);
         graphics.fill(character.color);
         entityContainerRef.current.addChild(graphics);
       }

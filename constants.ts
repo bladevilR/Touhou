@@ -273,9 +273,12 @@ export const WAVES = [
     { time: 0, interval: 180, enemyStats: { hp: 20, damage: 6, speed: 2.0, type: 'elf', exp: 8, color: '#87ceeb' } }, // Elf from start (every 3 seconds)
     { time: 60, interval: 45, enemyStats: { hp: 30, damage: 8, speed: 2.0, type: 'slime', exp: 5, color: '#3b7a57' } },
     { time: 180, interval: 30, enemyStats: { hp: 60, damage: 10, speed: 2.5, type: 'elf', exp: 12, color: '#87ceeb' } },
-    { time: 300, interval: 100, enemyStats: { hp: 500, damage: 20, speed: 1.5, type: 'boss', exp: 300, color: '#8e44ad' } },
+    { time: 300, interval: 300, enemyStats: { hp: 800, damage: 20, speed: 2.0, type: 'boss1', exp: 300, color: '#4dd2ff' } }, // Boss 1: 琪露诺
     { time: 360, interval: 15, enemyStats: { hp: 100, damage: 15, speed: 3.0, type: 'elf', exp: 20, color: '#4682b4' } },
     { time: 600, interval: 10, enemyStats: { hp: 200, damage: 20, speed: 3.5, type: 'ghost', exp: 35, color: '#2c3e50' } },
+    { time: 900, interval: 360, enemyStats: { hp: 1500, damage: 30, speed: 2.5, type: 'boss2', exp: 500, color: '#a8d8ea' } }, // Boss 2: 妖梦
+    { time: 1200, interval: 8, enemyStats: { hp: 300, damage: 25, speed: 4.0, type: 'ghost', exp: 50, color: '#16213e' } },
+    { time: 1800, interval: 450, enemyStats: { hp: 3000, damage: 40, speed: 2.0, type: 'boss3', exp: 800, color: '#f8b195' } }, // Boss 3: 辉夜
 ];
 
 function normalize(v: Vector2): Vector2 {
